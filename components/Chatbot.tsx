@@ -32,7 +32,6 @@ declare global {
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Type, FunctionDeclaration, FunctionCall } from '@google/genai';
-import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useAppContext } from '../context/AppContext';
 import { Transcript, Folder, Email } from '../types';
@@ -200,7 +199,8 @@ const Chatbot: React.FC = () => {
                 }
                 break;
             case 'logout':
-                signOut(auth).catch(error => console.error("Logout from chatbot failed", error));
+                // Fix: Use v8 `auth.signOut()` method
+                auth.signOut().catch(error => console.error("Logout from chatbot failed", error));
                 resultText = "Signing you out.";
                 break;
             default:

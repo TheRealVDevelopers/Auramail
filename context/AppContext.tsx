@@ -1,6 +1,8 @@
-
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
+// Fix: Use v8 namespaced imports and types for Firebase
+// Fix: Update Firebase imports to use the v9 compatibility layer (compat) to resolve type errors.
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/auth';
 import { auth } from '../firebase';
 import { Email, Folder, UserProfile } from '../types';
 import { getEmails } from '../services/emailService';
@@ -114,7 +116,9 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user: User | null) => {
+    // Fix: Use v8 `auth.onAuthStateChanged` method and `firebase.User` type
+    // Fix: firebase.User type is available via compat imports.
+    const unsubscribe = auth.onAuthStateChanged((user: firebase.User | null) => {
       if (user) {
         const userProfile: UserProfile = {
           uid: user.uid,

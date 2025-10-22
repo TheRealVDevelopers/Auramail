@@ -31,10 +31,6 @@ declare global {
 }
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-    createUserWithEmailAndPassword, 
-    signInWithEmailAndPassword,
-} from 'firebase/auth';
 import { auth } from '../firebase';
 import { setupNewUser } from '../services/emailService';
 import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents';
@@ -112,85 +108,6 @@ const Login: React.FC = () => {
         speechSynthesis.speak(utterance);
     }, [state.currentLanguage, playBeep]);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        if (password.length < 6) {
-            setError('Password must be at least 6 characters.');
-            if (isVoiceLoginActive) {
-                speak("Password must be at least 6 characters. Please try again.", cancelVoiceLogin);
-            }
-            return;
-        }
-        
-        try {
-            if (isRegisteringRef.current) {
-                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                await setupNewUser(userCredential.user);
-            } else {
-                await signInWithEmailAndPassword(auth, email, password);
-            }
-        } catch (err: any) {
-            const errorMessage = err.message.replace('Firebase: ', '');
-            setError(errorMessage);
-            if (isVoiceLoginActive) {
-                speak(`An error occurred: ${errorMessage}. Please try again.`, cancelVoiceLogin);
-            }
-        }
-    };
-    
-    const handleVoiceInput = useCallback((text: string) => {
-        const lowerText = text.toLowerCase().trim();
-        setTranscribedText(text);
-
-        if (!lowerText) {
-            speak("I didn't hear anything. Let's try that again.");
-            return;
-        }
-
-        switch(voiceStepRef.current) {
-            case 'action':
-                if (lowerText.includes('register')) {
-                    setIsRegistering(true);
-                    setVoiceFeedback('Registering. What is your email?');
-                    speak('Registering. What is your email?');
-                } else {
-                    setIsRegistering(false);
-                    setVoiceFeedback('Logging in. What is your email?');
-                    speak('Logging in. What is your email?');
-                }
-                setVoiceStep('email');
-                break;
-            case 'email':
-                const parsedEmail = lowerText.replace(/\s/g, '').replace(/at/g, '@').replace(/dot/g, '.');
-                setEmail(parsedEmail);
-                setVoiceFeedback('Got it. What is your password?');
-                speak('Got it. What is your password?');
-                setVoiceStep('password');
-                break;
-            case 'password':
-                const parsedPassword = lowerText.replace(/\s/g, '');
-                setPassword(parsedPassword);
-                setVoiceFeedback('Ready to submit? Say yes to confirm or no to cancel.');
-                speak('Ready to submit? Say yes to confirm or no to cancel.');
-                setVoiceStep('confirm');
-                break;
-            case 'confirm':
-                 if (lowerText.includes('yes') || lowerText.includes('proceed') || lowerText.includes('submit')) {
-                    const actionText = isRegisteringRef.current ? 'Registering...' : 'Signing in...';
-                    setVoiceFeedback(actionText);
-                    speak(actionText, () => {
-                        handleSubmit({ preventDefault: () => {} } as React.FormEvent);
-                    });
-                 } else {
-                    speak("Okay, I'll cancel.", cancelVoiceLogin);
-                 }
-                break;
-        }
-    }, [speak, cancelVoiceLogin, handleSubmit]);
-    
-    useEffect(() => { handleVoiceInputRef.current = handleVoiceInput; }, [handleVoiceInput]);
-
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -212,7 +129,9 @@ const Login: React.FC = () => {
         
         recognition.onerror = (event) => {
             console.error('Speech recognition error:', event.error);
-            speak("Sorry, I had trouble understanding. Please try again.", cancelVoiceLogin);
+            if(event.error !== 'no-speech') {
+                speak("Sorry, I had trouble understanding. Please try again.", cancelVoiceLogin);
+            }
         };
 
         recognition.onend = () => {
@@ -223,6 +142,86 @@ const Login: React.FC = () => {
         setIsListening(true);
     }, [state.currentLanguage, speak, cancelVoiceLogin]);
 
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters.');
+            if (isVoiceLoginActive) {
+                speak("Password must be at least 6 characters. Please try again.", cancelVoiceLogin);
+            }
+            return;
+        }
+        
+        try {
+            if (isRegisteringRef.current) {
+                // Fix: Use v8 `auth.createUserWithEmailAndPassword` method
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                await setupNewUser(userCredential.user!);
+            } else {
+                // Fix: Use v8 `auth.signInWithEmailAndPassword` method
+                await auth.signInWithEmailAndPassword(email, password);
+            }
+        } catch (err: any) {
+            const errorMessage = err.message.replace('Firebase: ', '');
+            setError(errorMessage);
+            if (isVoiceLoginActive) {
+                speak(`An error occurred: ${errorMessage}. Please try again.`, cancelVoiceLogin);
+            }
+        }
+    };
+    
+    const handleVoiceInput = useCallback((text: string) => {
+        const lowerText = text.toLowerCase().trim();
+        setTranscribedText(text);
+
+        if (!lowerText) {
+            speak("I didn't hear anything. Let's try that again.", startListening);
+            return;
+        }
+
+        switch(voiceStepRef.current) {
+            case 'action':
+                if (lowerText.includes('register')) {
+                    setIsRegistering(true);
+                    setVoiceFeedback('Registering. What is your email?');
+                    speak('Registering. What is your email?', startListening);
+                } else {
+                    setIsRegistering(false);
+                    setVoiceFeedback('Logging in. What is your email?');
+                    speak('Logging in. What is your email?', startListening);
+                }
+                setVoiceStep('email');
+                break;
+            case 'email':
+                const parsedEmail = lowerText.replace(/\s/g, '').replace(/at/g, '@').replace(/dot/g, '.');
+                setEmail(parsedEmail);
+                setVoiceFeedback('Got it. What is your password?');
+                speak('Got it. What is your password?', startListening);
+                setVoiceStep('password');
+                break;
+            case 'password':
+                const parsedPassword = lowerText.replace(/\s/g, '');
+                setPassword(parsedPassword);
+                setVoiceFeedback('Ready to submit? Say yes to confirm or no to cancel.');
+                speak('Ready to submit? Say yes to confirm or no to cancel.', startListening);
+                setVoiceStep('confirm');
+                break;
+            case 'confirm':
+                 if (lowerText.includes('yes') || lowerText.includes('proceed') || lowerText.includes('submit')) {
+                    const actionText = isRegisteringRef.current ? 'Registering...' : 'Signing in...';
+                    setVoiceFeedback(actionText);
+                    speak(actionText, () => {
+                        handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+                    });
+                 } else {
+                    speak("Okay, I'll cancel.", cancelVoiceLogin);
+                 }
+                break;
+        }
+    }, [speak, cancelVoiceLogin, handleSubmit, startListening]);
+    
+    useEffect(() => { handleVoiceInputRef.current = handleVoiceInput; }, [handleVoiceInput]);
 
     const handleVoiceLoginStart = () => {
         setIsVoiceLoginActive(true);

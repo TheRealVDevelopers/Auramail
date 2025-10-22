@@ -1,7 +1,6 @@
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
 import { EnvelopeIcon, SettingsIcon } from './icons/IconComponents';
-import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { SUPPORTED_LANGUAGES } from '../constants';
 
@@ -9,7 +8,8 @@ const Header: React.FC = () => {
   const { state, dispatch } = useAppContext();
 
   const handleLogout = () => {
-      signOut(auth).catch(error => console.error("Logout failed", error));
+      // Fix: Use v8 `auth.signOut()` method
+      auth.signOut().catch(error => console.error("Logout failed", error));
   };
 
   const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {

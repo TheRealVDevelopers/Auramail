@@ -1,11 +1,42 @@
+// Add type definitions for the Web Speech API to fix TypeScript errors.
+// This is necessary because the API is not yet a W3C standard.
+interface SpeechRecognition extends EventTarget {
+    continuous: boolean;
+    grammars: any;
+    lang: string;
+    interimResults: boolean;
+    maxAlternatives: number;
+    onaudioend: ((ev: Event) => any) | null;
+    onaudiostart: ((ev: Event) => any) | null;
+    onend: ((ev: Event) => any) | null;
+    onerror: ((ev: any) => any) | null;
+    onnomatch: ((ev: any) => any) | null;
+    onresult: ((ev: any) => any) | null;
+    onsoundend: ((ev: Event) => any) | null;
+    onsoundstart: ((ev: Event) => any) | null;
+    onspeechend: ((ev: Event) => any) | null;
+    onspeechstart: ((ev: Event) => any) | null;
+    onstart: ((ev: Event) => any) | null;
+    serviceURI: string;
+    abort(): void;
+    start(): void;
+    stop(): void;
+}
+
+declare global {
+    interface Window {
+        SpeechRecognition: new () => SpeechRecognition;
+        webkitSpeechRecognition: new () => SpeechRecognition;
+    }
+}
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI, LiveSession, Modality, Type, FunctionDeclaration, LiveServerMessage, Blob, FunctionCall } from '@google/genai';
+import { GoogleGenAI, Type, FunctionDeclaration, FunctionCall } from '@google/genai';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useAppContext } from '../context/AppContext';
 import { Transcript, Folder, Email } from '../types';
 import { INITIAL_SYSTEM_PROMPT } from '../constants';
-import { decode, encode, decodeAudioData } from '../utils/audioUtils';
 import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } from './icons/IconComponents';
 import { updateEmailFolder, getUnreadCount, sendEmail } from '../services/emailService';
 
@@ -44,13 +75,10 @@ const Chatbot: React.FC = () => {
     }>({ active: false, step: '', draft: {}, fieldToChange: '' });
     
     // Refs for async operations and cleanup
-    const sessionRef = useRef<LiveSession | null>(null);
+    const recognitionRef = useRef<SpeechRecognition | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const mediaStreamRef = useRef<MediaStream | null>(null);
-    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-    const transcriptEndRef = useRef<HTMLDivElement>(null);
+    const transcriptEndRef = useRef<HTMLDivElement | null>(null);
     
-    // Refs to get latest state inside callbacks and avoid stale closures
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
 
@@ -78,39 +106,21 @@ const Chatbot: React.FC = () => {
             onComplete?.();
         };
 
-        if (isMuted) {
+        if (isMuted || !('speechSynthesis' in window)) {
             handleEnd();
             return;
         }
 
-        try {
-            setChatbotStatus('PROCESSING');
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-preview-tts',
-                contents: [{ parts: [{ text }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
-                }
-            });
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && audioContextRef.current) {
-                setChatbotStatus('SPEAKING');
-                const audioCtx = audioContextRef.current;
-                const audioBuffer = await decodeAudioData(decode(base64Audio), audioCtx, 24000, 1);
-                const source = audioCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(audioCtx.destination);
-                source.onended = handleEnd;
-                source.start();
-            } else {
-                handleEnd();
-            }
-        } catch (error) {
-            console.error("TTS Error:", error);
+        setChatbotStatus('SPEAKING');
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = state.currentLanguage;
+        utterance.onend = handleEnd;
+        utterance.onerror = (e) => {
+            console.error("TTS Error:", e);
             handleEnd();
-        }
-    }, [isMuted, isListening, playBeep]);
+        };
+        speechSynthesis.speak(utterance);
+    }, [isMuted, isListening, playBeep, state.currentLanguage]);
 
     const functionDeclarations: FunctionDeclaration[] = [
         {
@@ -154,33 +164,13 @@ const Chatbot: React.FC = () => {
     ];
 
     const tools = [{ functionDeclarations }];
-
-    const stopSession = useCallback(async () => {
-        setIsListening(false);
-        setChatbotStatus('IDLE');
     
-        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
-    
-        scriptProcessorRef.current?.disconnect();
-        scriptProcessorRef.current = null;
-    
-        sessionRef.current?.close();
-        sessionRef.current = null;
-
-        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-            await audioContextRef.current.close().catch(console.error);
-            audioContextRef.current = null;
-        }
-    }, []);
-
-    const handleFunctionCall = useCallback(async (fc: FunctionCall, session: LiveSession | null): Promise<void> => {
+    const handleFunctionCall = useCallback(async (fc: FunctionCall): Promise<string> => {
         setChatbotStatus('PROCESSING');
         const { name, args } = fc;
         const { userProfile, selectedEmail } = state;
         let resultText = "Done.";
-        let shouldSpeakResult = true;
-
+        
         switch (name) {
             case 'open_folder':
                 const folder = args.folder_name as Folder;
@@ -193,8 +183,7 @@ const Chatbot: React.FC = () => {
             case 'start_interactive_composition':
                 setComposeState({ active: true, step: 'recipient', draft: {}, fieldToChange: '' });
                 speak("Of course. Who is the recipient?");
-                shouldSpeakResult = false; // Don't speak "Done" or send tool response
-                break; 
+                return ''; // Don't return text to speak, `speak` is called directly
             case 'select_email':
                 if (args.email_id) dispatch({ type: 'SELECT_EMAIL', payload: args.email_id as string });
                 break;
@@ -219,15 +208,7 @@ const Chatbot: React.FC = () => {
                 resultText = `Function ${name} not recognized.`;
         }
 
-        if (shouldSpeakResult) {
-            if (session) {
-                // For live sessions, send response back to model to continue conversation
-                session.sendToolResponse({ functionResponses: { id: fc.id, name, response: { result: resultText } } });
-            } else {
-                // For text input, just speak the result directly
-                await speak(resultText);
-            }
-        }
+        return resultText;
     }, [dispatch, state, speak]);
 
     const handleComposeInput = useCallback(async (text: string) => {
@@ -313,106 +294,13 @@ const Chatbot: React.FC = () => {
         setComposeState(newState);
 
     }, [state.userProfile, dispatch, speak]);
-    
-    const startVoiceSession = useCallback(async () => {
-        if (isListening || sessionRef.current) return;
-        
-        setInputValue('');
-        setLiveTranscript('');
-        
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-        
-        const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail);
 
-        try {
-            const session = await ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-                config: {
-                    systemInstruction,
-                    tools,
-                    responseModalities: [Modality.AUDIO],
-                    inputAudioTranscription: {},
-                    speechConfig: {
-                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
-                    }
-                },
-                callbacks: {
-                    onopen: async () => {
-                        setIsListening(true);
-                        setChatbotStatus('LISTENING');
-                        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        const source = audioContextRef.current!.createMediaStreamSource(mediaStreamRef.current);
-                        scriptProcessorRef.current = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
-                        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                            if (!sessionRef.current) return;
-                            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-                            const pcmBlob: Blob = {
-                                data: encode(new Uint8Array(new Int16Array(inputData.map(x => x * 32768)).buffer)),
-                                mimeType: 'audio/pcm;rate=16000',
-                            };
-                            sessionRef.current.sendRealtimeInput({ media: pcmBlob });
-                        };
-                        source.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(audioContextRef.current!.destination);
-                    },
-                    onmessage: async (message: LiveServerMessage) => {
-                        if (message.serverContent?.inputTranscription) {
-                            const transcription = message.serverContent.inputTranscription.text;
-                            setLiveTranscript(transcription);
-                            if (message.serverContent?.turnComplete && transcription) {
-                                setLiveTranscript('');
-                                if (composeStateRef.current.active) {
-                                    handleComposeInput(transcription);
-                                } else {
-                                    setTranscript(prev => [...prev, { id: `user-${Date.now()}`, text: transcription, isUser: true, timestamp: Date.now() }]);
-                                }
-                            }
-                        }
-    
-                        if (message.serverContent?.modelTurn?.parts[0]?.inlineData?.data && !isMuted) {
-                            setChatbotStatus('SPEAKING');
-                            const base64Audio = message.serverContent.modelTurn.parts[0].inlineData.data;
-                            if (audioContextRef.current && audioContextRef.current.state === 'running') {
-                                const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
-                                const source = audioContextRef.current.createBufferSource();
-                                source.buffer = audioBuffer;
-                                source.connect(audioContextRef.current.destination);
-                                source.onended = () => {
-                                   setChatbotStatus('LISTENING');
-                                   playBeep();
-                                };
-                                source.start();
-                            }
-                        }
-    
-                        if (message.toolCall?.functionCalls) {
-                           message.toolCall.functionCalls.forEach(fc => handleFunctionCall(fc, sessionRef.current));
-                        }
-                    },
-                    onerror: (e: ErrorEvent) => {
-                        console.error('Session error:', e);
-                        stopSession();
-                    },
-                    onclose: () => {},
-                },
-            });
-            sessionRef.current = session;
-        } catch (error) {
-            console.error("Failed to connect to live session:", error);
-            stopSession();
-        }
-
-    }, [isListening, state.currentFolder, state.emails, state.selectedEmail, stopSession, playBeep, isMuted, handleFunctionCall, handleComposeInput]);
-
-    const handleTextSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const text = inputValue.trim();
+    const processTranscript = useCallback(async (text: string) => {
         if (!text) return;
-        setInputValue('');
         setLiveTranscript('');
 
-        if (composeState.active) {
-            handleComposeInput(text);
+        if (composeStateRef.current.active) {
+            await handleComposeInput(text);
             return;
         }
 
@@ -421,31 +309,27 @@ const Chatbot: React.FC = () => {
 
         try {
             const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail);
-            let completeResponseText = '';
             
-            const responseStream = await ai.models.generateContentStream({
+            const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: {
-                    role: 'user',
-                    parts: [{ text }],
-                },
+                contents: [{ role: 'user', parts: [{ text }] }],
                 config: { systemInstruction, tools }
             });
 
-            for await (const chunk of responseStream) {
-                if (chunk.functionCalls) {
-                    for (const fc of chunk.functionCalls) {
-                        await handleFunctionCall(fc, null);
-                    }
-                }
-                const chunkText = chunk.text;
-                if (chunkText) {
-                    completeResponseText += chunkText;
+            let finalResponseText = '';
+            if (response.functionCalls) {
+                for (const fc of response.functionCalls) {
+                    const result = await handleFunctionCall(fc);
+                    if (result) finalResponseText += result + ' ';
                 }
             }
-             if (completeResponseText) {
-                await speak(completeResponseText.trim());
-             }
+            if(response.text) {
+                finalResponseText += response.text;
+            }
+
+            if (finalResponseText.trim()) {
+                await speak(finalResponseText.trim());
+            }
 
         } catch (error) {
             console.error("Text generation error:", error);
@@ -455,16 +339,85 @@ const Chatbot: React.FC = () => {
                 setChatbotStatus('IDLE');
             }
         }
-    };
+    }, [state.currentFolder, state.emails, state.selectedEmail, handleComposeInput, handleFunctionCall, speak]);
 
+    const handleTextSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const text = inputValue.trim();
+        if (text) {
+            setInputValue('');
+            await processTranscript(text);
+        }
+    };
+    
+    const toggleListening = useCallback(() => {
+        if (isListening) {
+            recognitionRef.current?.stop();
+            return;
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            speak("Voice recognition is not supported in this browser.");
+            return;
+        }
+
+        if (!recognitionRef.current) {
+            recognitionRef.current = new SpeechRecognition();
+            const recognition = recognitionRef.current;
+            recognition.continuous = false;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                let interim = '';
+                let final = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        final += event.results[i][0].transcript;
+                    } else {
+                        interim += event.results[i][0].transcript;
+                    }
+                }
+                setLiveTranscript(interim);
+                if (final.trim()) {
+                    processTranscript(final.trim());
+                }
+            };
+            recognition.onerror = (event) => {
+                console.error("Speech recognition error", event.error);
+                if(event.error !== 'no-speech') {
+                    speak("Sorry, there was a recognition error.");
+                }
+            };
+            recognition.onstart = () => {
+                setIsListening(true);
+                setChatbotStatus('LISTENING');
+            };
+            recognition.onend = () => {
+                setIsListening(false);
+                setChatbotStatus('IDLE');
+            };
+        }
+
+        recognitionRef.current.lang = state.currentLanguage;
+        recognitionRef.current.start();
+
+    }, [isListening, state.currentLanguage, speak, processTranscript]);
 
     useEffect(() => {
         transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [transcript, liveTranscript]);
     
     useEffect(() => {
-        return () => { stopSession(); };
-    }, [stopSession]);
+        // Init audio context on first open for beeps
+        if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        return () => { 
+            recognitionRef.current?.stop();
+            audioContextRef.current?.close().catch(console.error);
+        };
+    }, []);
 
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -518,8 +471,8 @@ const Chatbot: React.FC = () => {
                     <button onClick={() => setIsMuted(prev => !prev)} className="p-1 rounded-full hover:bg-gray-200" title={isMuted ? 'Unmute' : 'Mute'}>
                         {isMuted ? <SpeakerOffIcon className="w-5 h-5 text-gray-700" /> : <SpeakerIcon className="w-5 h-5 text-gray-700" />}
                     </button>
-                    <button onClick={isListening ? stopSession : startVoiceSession} className="p-1 rounded-full hover:bg-gray-200" title={isListening ? 'Stop Listening' : 'Start Listening'}>
-                        {isListening ? <PauseIcon className="w-5 h-5 text-gray-700" /> : <MicIcon className="w-5 h-5 text-gray-700" />}
+                    <button onClick={toggleListening} className="p-1 rounded-full hover:bg-gray-200" title={isListening ? 'Stop Listening' : 'Start Listening'}>
+                        {isListening ? <PauseIcon className="w-5 h-5 text-red-500" /> : <MicIcon className="w-5 h-5 text-gray-700" />}
                     </button>
                     <button onClick={() => dispatch({ type: 'TOGGLE_CHATBOT' })} className="p-1 rounded-full hover:bg-gray-200 text-gray-700 font-bold text-lg" title="Close">
                         &times;
@@ -548,7 +501,7 @@ const Chatbot: React.FC = () => {
                 )}
                 <div ref={transcriptEndRef} />
             </div>
-            <form onSubmit={handleTextSubmit} className="p-3 border-t border-gray-200 bg-white rounded-b-lg">
+            <form onSubmit={handleTextSubmit} id="chatbot-form" className="p-3 border-t border-gray-200 bg-white rounded-b-lg">
                 <div className="flex items-center space-x-2">
                     <input
                         type="text"
@@ -556,7 +509,7 @@ const Chatbot: React.FC = () => {
                         onChange={(e) => setInputValue(e.target.value)}
                         placeholder={isListening ? 'Listening...' : 'Type a message or command...'}
                         className="flex-1 w-full bg-gray-100 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        disabled={isListening && !composeState.active}
+                        disabled={isListening}
                     />
                     <button type="submit" className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300">
                         <PaperAirplaneIcon className="w-5 h-5" />

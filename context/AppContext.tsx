@@ -16,6 +16,7 @@ interface AppState {
   loading: boolean;
   error: string | null;
   isChatbotOpen: boolean;
+  currentLanguage: string;
 }
 
 type Action =
@@ -33,7 +34,8 @@ type Action =
   | { type: 'UPDATE_COMPOSE'; payload: Partial<Email> }
   | { type: 'SEND_COMPOSE' }
   | { type: 'CLOSE_COMPOSE' }
-  | { type: 'TOGGLE_CHATBOT' };
+  | { type: 'TOGGLE_CHATBOT' }
+  | { type: 'SET_LANGUAGE'; payload: string };
 
 const initialState: AppState = {
   isAuthenticated: false,
@@ -46,6 +48,7 @@ const initialState: AppState = {
   loading: true, // Start loading to check auth status
   error: null,
   isChatbotOpen: false,
+  currentLanguage: 'en-US',
 };
 
 const appReducer = (state: AppState, action: Action): AppState => {
@@ -92,6 +95,8 @@ const appReducer = (state: AppState, action: Action): AppState => {
         return { ...state, isComposeOpen: false, composeEmail: {} };
     case 'TOGGLE_CHATBOT':
         return { ...state, isChatbotOpen: !state.isChatbotOpen };
+    case 'SET_LANGUAGE':
+        return { ...state, currentLanguage: action.payload };
     default:
       return state;
   }

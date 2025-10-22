@@ -1,46 +1,66 @@
+// Add type definitions for the Web Speech API to fix TypeScript errors.
+// This is necessary because the API is not yet a W3C standard.
+interface SpeechRecognition extends EventTarget {
+    continuous: boolean;
+    grammars: any;
+    lang: string;
+    interimResults: boolean;
+    maxAlternatives: number;
+    onaudioend: ((ev: Event) => any) | null;
+    onaudiostart: ((ev: Event) => any) | null;
+    onend: ((ev: Event) => any) | null;
+    onerror: ((ev: any) => any) | null;
+    onnomatch: ((ev: any) => any) | null;
+    onresult: ((ev: any) => any) | null;
+    onsoundend: ((ev: Event) => any) | null;
+    onsoundstart: ((ev: Event) => any) | null;
+    onspeechend: ((ev: Event) => any) | null;
+    onspeechstart: ((ev: Event) => any) | null;
+    onstart: ((ev: Event) => any) | null;
+    serviceURI: string;
+    abort(): void;
+    start(): void;
+    stop(): void;
+}
+
+declare global {
+    interface Window {
+        SpeechRecognition: new () => SpeechRecognition;
+        webkitSpeechRecognition: new () => SpeechRecognition;
+    }
+}
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     createUserWithEmailAndPassword, 
     signInWithEmailAndPassword,
 } from 'firebase/auth';
-import { GoogleGenAI, LiveSession, Modality, LiveServerMessage, Blob } from '@google/genai';
 import { auth } from '../firebase';
 import { setupNewUser } from '../services/emailService';
-import { decode, encode, decodeAudioData } from '../utils/audioUtils';
 import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+import { useAppContext } from '../context/AppContext';
 
 const Login: React.FC = () => {
+    const { state } = useAppContext();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // State for voice login flow
     const [isVoiceLoginActive, setIsVoiceLoginActive] = useState(false);
     const [voiceStep, setVoiceStep] = useState<'idle' | 'action' | 'email' | 'password' | 'confirm'>('idle');
     const [voiceFeedback, setVoiceFeedback] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [transcribedText, setTranscribedText] = useState('');
 
-    // Refs for audio and session management
-    const sessionRef = useRef<LiveSession | null>(null);
+    const recognitionRef = useRef<SpeechRecognition | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const mediaStreamRef = useRef<MediaStream | null>(null);
-    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-    
-    // Refs to get latest state inside callbacks and avoid stale closures
     const voiceStepRef = useRef(voiceStep);
     useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
     const isRegisteringRef = useRef(isRegistering);
     useEffect(() => { isRegisteringRef.current = isRegistering; }, [isRegistering]);
-
-    // Ref to hold the latest version of the input handler function
     const handleVoiceInputRef = useRef<(text: string) => void>(() => {});
 
-    // --- Audio and Session Management ---
-    
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
         const context = audioContextRef.current;
@@ -56,24 +76,13 @@ const Login: React.FC = () => {
         oscillator.stop(context.currentTime + 0.2);
     }, []);
     
-    const stopSession = useCallback(async () => {
+    const stopListening = useCallback(() => {
         setIsListening(false);
-        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
-        scriptProcessorRef.current?.disconnect();
-        scriptProcessorRef.current = null;
-        
-        sessionRef.current?.close();
-        sessionRef.current = null;
-
-        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-            await audioContextRef.current.close().catch(console.error);
-            audioContextRef.current = null;
-        }
+        recognitionRef.current?.stop();
     }, []);
 
     const cancelVoiceLogin = useCallback(() => {
-        stopSession();
+        stopListening();
         setIsVoiceLoginActive(false);
         setVoiceStep('idle');
         setVoiceFeedback('');
@@ -81,40 +90,27 @@ const Login: React.FC = () => {
         setPassword('');
         setError(null);
         setTranscribedText('');
-    }, [stopSession]);
+    }, [stopListening]);
 
-    const speak = useCallback(async (text: string, onComplete?: () => void) => {
-        try {
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-preview-tts',
-                contents: [{ parts: [{ text }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
-                }
-            });
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && audioContextRef.current) {
-                const audioCtx = audioContextRef.current;
-                const audioBuffer = await decodeAudioData(decode(base64Audio), audioCtx, 24000, 1);
-                const source = audioCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(audioCtx.destination);
-                source.onended = () => { 
-                    playBeep();
-                    onComplete?.();
-                };
-                source.start();
-            } else {
-                playBeep();
-                onComplete?.();
-            }
-        } catch (error) {
-            console.error("TTS Error:", error);
+    const speak = useCallback((text: string, onComplete?: () => void) => {
+        if (!('speechSynthesis' in window)) {
+            console.error("Browser does not support speech synthesis.");
+            onComplete?.();
+            return;
+        }
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = state.currentLanguage;
+        utterance.onend = () => {
             playBeep();
             onComplete?.();
-        }
-    }, [playBeep]);
+        };
+        utterance.onerror = (e) => {
+            console.error("Speech synthesis error", e);
+            playBeep();
+            onComplete?.();
+        };
+        speechSynthesis.speak(utterance);
+    }, [state.currentLanguage, playBeep]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -134,7 +130,6 @@ const Login: React.FC = () => {
             } else {
                 await signInWithEmailAndPassword(auth, email, password);
             }
-            // Successful login/register will unmount this component via the auth state listener
         } catch (err: any) {
             const errorMessage = err.message.replace('Firebase: ', '');
             setError(errorMessage);
@@ -146,7 +141,7 @@ const Login: React.FC = () => {
     
     const handleVoiceInput = useCallback((text: string) => {
         const lowerText = text.toLowerCase().trim();
-        setTranscribedText(text); // Show the final transcription
+        setTranscribedText(text);
 
         if (!lowerText) {
             speak("I didn't hear anything. Let's try that again.");
@@ -187,7 +182,6 @@ const Login: React.FC = () => {
                     speak(actionText, () => {
                         handleSubmit({ preventDefault: () => {} } as React.FormEvent);
                     });
-                    // Don't change state here, let handleSubmit and auth state handle it
                  } else {
                     speak("Okay, I'll cancel.", cancelVoiceLogin);
                  }
@@ -197,79 +191,54 @@ const Login: React.FC = () => {
     
     useEffect(() => { handleVoiceInputRef.current = handleVoiceInput; }, [handleVoiceInput]);
 
-    const startVoiceSession = useCallback(async () => {
-        if (isListening || sessionRef.current) return;
-        
-        setTranscribedText('');
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-        
-        try {
-            const session = await ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-                config: { 
-                    systemInstruction: "You are a voice assistant for a login page. Your only function is to accurately transcribe what the user says.",
-                    inputAudioTranscription: {},
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
-                },
-                callbacks: {
-                    onopen: async () => {
-                        setIsListening(true);
-                        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        const source = audioContextRef.current!.createMediaStreamSource(mediaStreamRef.current);
-                        scriptProcessorRef.current = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
-                        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                            if (!sessionRef.current) return;
-                            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-                            const pcmBlob: Blob = {
-                                data: encode(new Uint8Array(new Int16Array(inputData.map(x => x * 32768)).buffer)),
-                                mimeType: 'audio/pcm;rate=16000',
-                            };
-                            sessionRef.current.sendRealtimeInput({ media: pcmBlob });
-                        };
-                        source.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(audioContextRef.current!.destination);
-                    },
-                    onmessage: (message: LiveServerMessage) => {
-                        if (message.serverContent?.inputTranscription) {
-                            const transcription = message.serverContent.inputTranscription.text;
-                            setTranscribedText(transcription); // Live update
-                            if (message.serverContent?.turnComplete) {
-                                handleVoiceInputRef.current(transcription);
-                            }
-                        }
-                    },
-                    onerror: (e: ErrorEvent) => {
-                        console.error('Session error:', e);
-                        speak("Sorry, there was a connection error.", cancelVoiceLogin);
-                    },
-                    onclose: () => {},
-                },
-            });
-            sessionRef.current = session;
-            return session;
-        } catch (error) {
-            console.error("Failed to start session:", error);
-            cancelVoiceLogin();
-            return null;
+    const startListening = useCallback(() => {
+        const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            speak("Voice recognition is not supported in this browser.", cancelVoiceLogin);
+            return;
         }
-    }, [isListening, speak, cancelVoiceLogin]);
+        
+        recognitionRef.current = new SpeechRecognition();
+        const recognition = recognitionRef.current;
+        recognition.lang = state.currentLanguage;
+        recognition.continuous = false;
+        recognition.interimResults = false;
 
-    const handleVoiceLoginStart = async () => {
+        recognition.onresult = (event) => {
+            const lastResult = event.results[event.results.length - 1];
+            const transcript = lastResult[0].transcript.trim();
+            handleVoiceInputRef.current(transcript);
+        };
+        
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            speak("Sorry, I had trouble understanding. Please try again.", cancelVoiceLogin);
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+        };
+
+        recognition.start();
+        setIsListening(true);
+    }, [state.currentLanguage, speak, cancelVoiceLogin]);
+
+
+    const handleVoiceLoginStart = () => {
         setIsVoiceLoginActive(true);
-        const session = await startVoiceSession();
-        if (session) {
-            setVoiceStep('action');
-            const feedback = 'Welcome! Would you like to log in or register?';
-            setVoiceFeedback(feedback);
-            speak(feedback);
-        }
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        setVoiceStep('action');
+        const feedback = 'Welcome! Would you like to log in or register?';
+        setVoiceFeedback(feedback);
+        speak(feedback, startListening);
     };
 
     useEffect(() => {
-        // Cleanup function to run when the component unmounts
-        return () => { stopSession(); };
-    }, [stopSession]);
+        return () => { 
+            stopListening();
+            audioContextRef.current?.close().catch(console.error);
+         };
+    }, [stopListening]);
     
     if (isVoiceLoginActive) {
         return (

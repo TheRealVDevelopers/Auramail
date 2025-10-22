@@ -1,0 +1,331 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { auth } from '../firebase.js';
+import { setupNewUser } from '../services/emailService.js';
+import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents.js';
+import { useAppContext } from '../context/AppContext.js';
+
+const Login = () => {
+    const { state } = useAppContext();
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [error, setError] = useState(null);
+
+    const [isVoiceLoginActive, setIsVoiceLoginActive] = useState(false);
+    const [voiceStep, setVoiceStep] = useState('idle');
+    const [voiceFeedback, setVoiceFeedback] = useState('');
+    const [isListening, setIsListening] = useState(false);
+    const [transcribedText, setTranscribedText] = useState('');
+
+    const recognitionRef = useRef(null);
+    const audioContextRef = useRef(null);
+    const voiceStepRef = useRef(voiceStep);
+    useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
+    const isRegisteringRef = useRef(isRegistering);
+    useEffect(() => { isRegisteringRef.current = isRegistering; }, [isRegistering]);
+    const handleVoiceInputRef = useRef(() => {});
+
+    const playBeep = useCallback(() => {
+        if (!audioContextRef.current) return;
+        const context = audioContextRef.current;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0, context.currentTime);
+        gain.gain.linearRampToValueAtTime(0.3, context.currentTime + 0.05);
+        gain.gain.linearRampToValueAtTime(0, context.currentTime + 0.15);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.2);
+    }, []);
+    
+    const stopListening = useCallback(() => {
+        setIsListening(false);
+        recognitionRef.current?.stop();
+    }, []);
+
+    const cancelVoiceLogin = useCallback(() => {
+        stopListening();
+        setIsVoiceLoginActive(false);
+        setVoiceStep('idle');
+        setVoiceFeedback('');
+        setEmail('');
+        setPassword('');
+        setError(null);
+        setTranscribedText('');
+    }, [stopListening]);
+
+    const speak = useCallback((text, onComplete) => {
+        if (!('speechSynthesis' in window)) {
+            console.error("Browser does not support speech synthesis.");
+            onComplete?.();
+            return;
+        }
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = state.currentLanguage;
+        utterance.onend = () => {
+            playBeep();
+            onComplete?.();
+        };
+        utterance.onerror = (e) => {
+            console.error("Speech synthesis error", e);
+            playBeep();
+            onComplete?.();
+        };
+        speechSynthesis.speak(utterance);
+    }, [state.currentLanguage, playBeep]);
+
+    const startListening = useCallback(() => {
+        const SpeechRecognition = window.SpeechRecognition || (window).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            speak("Voice recognition is not supported in this browser.", cancelVoiceLogin);
+            return;
+        }
+        
+        recognitionRef.current = new SpeechRecognition();
+        const recognition = recognitionRef.current;
+        recognition.lang = state.currentLanguage;
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onresult = (event) => {
+            const lastResult = event.results[event.results.length - 1];
+            const transcript = lastResult[0].transcript.trim();
+            handleVoiceInputRef.current(transcript);
+        };
+        
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            if(event.error !== 'no-speech') {
+                speak("Sorry, I had trouble understanding. Please try again.", cancelVoiceLogin);
+            }
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+        };
+
+        recognition.start();
+        setIsListening(true);
+    }, [state.currentLanguage, speak, cancelVoiceLogin]);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError(null);
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters.');
+            if (isVoiceLoginActive) {
+                speak("Password must be at least 6 characters. Please try again.", cancelVoiceLogin);
+            }
+            return;
+        }
+        
+        try {
+            if (isRegisteringRef.current) {
+                // Fix: Use v8 `auth.createUserWithEmailAndPassword` method
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                await setupNewUser(userCredential.user);
+            } else {
+                // Fix: Use v8 `auth.signInWithEmailAndPassword` method
+                await auth.signInWithEmailAndPassword(email, password);
+            }
+        } catch (err) {
+            const errorMessage = err.message.replace('Firebase: ', '');
+            setError(errorMessage);
+            if (isVoiceLoginActive) {
+                speak(`An error occurred: ${errorMessage}. Please try again.`, cancelVoiceLogin);
+            }
+        }
+    };
+    
+    const handleVoiceInput = useCallback((text) => {
+        const lowerText = text.toLowerCase().trim();
+        setTranscribedText(text);
+
+        if (!lowerText) {
+            speak("I didn't hear anything. Let's try that again.", startListening);
+            return;
+        }
+
+        switch(voiceStepRef.current) {
+            case 'action':
+                if (lowerText.includes('register')) {
+                    setIsRegistering(true);
+                    setVoiceFeedback('Registering. What is your email?');
+                    speak('Registering. What is your email?', startListening);
+                } else {
+                    setIsRegistering(false);
+                    setVoiceFeedback('Logging in. What is your email?');
+                    speak('Logging in. What is your email?', startListening);
+                }
+                setVoiceStep('email');
+                break;
+            case 'email':
+                const parsedEmail = lowerText.replace(/\s/g, '').replace(/at/g, '@').replace(/dot/g, '.');
+                setEmail(parsedEmail);
+                setVoiceFeedback('Got it. What is your password?');
+                speak('Got it. What is your password?', startListening);
+                setVoiceStep('password');
+                break;
+            case 'password':
+                const parsedPassword = lowerText.replace(/\s/g, '');
+                setPassword(parsedPassword);
+                setVoiceFeedback('Ready to submit? Say yes to confirm or no to cancel.');
+                speak('Ready to submit? Say yes to confirm or no to cancel.', startListening);
+                setVoiceStep('confirm');
+                break;
+            case 'confirm':
+                 if (lowerText.includes('yes') || lowerText.includes('proceed') || lowerText.includes('submit')) {
+                    const actionText = isRegisteringRef.current ? 'Registering...' : 'Signing in...';
+                    setVoiceFeedback(actionText);
+                    speak(actionText, () => {
+                        handleSubmit({ preventDefault: () => {} });
+                    });
+                 } else {
+                    speak("Okay, I'll cancel.", cancelVoiceLogin);
+                 }
+                break;
+        }
+    }, [speak, cancelVoiceLogin, handleSubmit, startListening]);
+    
+    useEffect(() => { handleVoiceInputRef.current = handleVoiceInput; }, [handleVoiceInput]);
+
+    const handleVoiceLoginStart = () => {
+        setIsVoiceLoginActive(true);
+        audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)();
+        setVoiceStep('action');
+        const feedback = 'Welcome! Would you like to log in or register?';
+        setVoiceFeedback(feedback);
+        speak(feedback, startListening);
+    };
+
+    useEffect(() => {
+        return () => { 
+            stopListening();
+            audioContextRef.current?.close().catch(console.error);
+         };
+    }, [stopListening]);
+    
+    if (isVoiceLoginActive) {
+        return (
+            React.createElement('div', { className: "flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4" },
+                React.createElement('div', { className: "w-full max-w-sm p-8 space-y-6 bg-white rounded-xl shadow-lg text-center" },
+                    React.createElement(MicIcon, { className: "w-16 h-16 text-blue-600 mx-auto animate-pulse" }),
+                    React.createElement('h2', { className: "text-2xl font-bold text-gray-800" }, "Voice Sign-In"),
+                    React.createElement('p', { className: "text-lg text-gray-600 min-h-[5rem] flex items-center justify-center" }, voiceFeedback),
+                    React.createElement('div', { className: "text-sm text-gray-600 bg-gray-100 rounded-lg p-3 min-h-[3.5rem] flex items-center justify-center" },
+                        React.createElement('p', { className: "font-mono" }, transcribedText || (isListening ? '...' : ' '))
+                    ),
+                    React.createElement('div', { className: "pt-4" },
+                        React.createElement('button', 
+                            { 
+                                onClick: cancelVoiceLogin,
+                                className: "w-full py-3 font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
+                            },
+                            "Cancel"
+                        )
+                    )
+                )
+            )
+        );
+    }
+
+    return (
+        React.createElement('div', { className: "flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4" },
+            React.createElement('div', { className: "w-full max-w-sm p-8 space-y-6 bg-white rounded-xl shadow-lg" },
+                React.createElement('div', { className: "text-center space-y-4" },
+                    React.createElement('div', { className: "inline-block p-3 bg-blue-600 rounded-2xl shadow-md" },
+                        React.createElement(LogoEnvelopeIcon, { className: "w-8 h-8 text-white" })
+                    ),
+                    React.createElement('h1', { className: "text-3xl font-bold text-blue-600" }, "VoxMail"),
+                    React.createElement('p', { className: "text-sm text-gray-500" }, "Voice-First Email Platform")
+                ),
+                
+                React.createElement('button', 
+                    { 
+                        className: "w-full flex items-center justify-center gap-3 py-3 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500",
+                        onClick: handleVoiceLoginStart,
+                        "aria-label": "Sign in or register with your voice"
+                    },
+                    React.createElement(MicIcon, { className: "w-5 h-5 text-gray-600" }),
+                    "Use Voice Sign-In"
+                ),
+
+                React.createElement('div', { className: "flex items-center" },
+                    React.createElement('hr', { className: "flex-grow border-gray-200" }),
+                    React.createElement('span', { className: "mx-4 text-xs font-medium text-gray-400 uppercase" }, "OR CONTINUE MANUALLY"),
+                    React.createElement('hr', { className: "flex-grow border-gray-200" })
+                ),
+
+                React.createElement('div', { className: "flex bg-gray-100 p-1 rounded-lg" },
+                    React.createElement('button',
+                        {
+                            onClick: () => { setIsRegistering(false); setError(null); },
+                            className: `w-1/2 py-2 text-sm font-semibold rounded-md transition-all duration-300 ${!isRegistering ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`
+                        },
+                        "Login"
+                    ),
+                    React.createElement('button',
+                        {
+                            onClick: () => { setIsRegistering(true); setError(null); },
+                            className: `w-1/2 py-2 text-sm font-semibold rounded-md transition-all duration-300 ${isRegistering ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`
+                        },
+                        "Register"
+                    )
+                ),
+
+                React.createElement('form', { onSubmit: handleSubmit, className: "space-y-4" },
+                    React.createElement('div', null,
+                        React.createElement('label', { htmlFor: "email", className: "text-sm font-medium text-gray-700" }, "Email"),
+                        React.createElement('div', { className: "relative mt-1" },
+                            React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
+                                React.createElement(UserIcon, { className: "w-5 h-5 text-gray-400" })
+                            ),
+                            React.createElement('input', 
+                                { 
+                                    id: "email", 
+                                    type: "email", 
+                                    value: email, 
+                                    onChange: (e) => setEmail(e.target.value), 
+                                    placeholder: "email@example.com", 
+                                    required: true,
+                                    className: "w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
+                                }
+                            )
+                        )
+                    ),
+                    React.createElement('div', null,
+                        React.createElement('label', { htmlFor: "password", className: "text-sm font-medium text-gray-700" }, "Password"),
+                        React.createElement('div', { className: "relative mt-1" },
+                            React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
+                                React.createElement(LockIcon, { className: "w-5 h-5 text-gray-400" })
+                            ),
+                            React.createElement('input', 
+                                { 
+                                    id: "password", 
+                                    type: "password", 
+                                    value: password, 
+                                    onChange: (e) => setPassword(e.target.value), 
+                                    placeholder: "••••••••", 
+                                    required: true,
+                                    className: "w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
+                                }
+                            )
+                        )
+                    ),
+                    error && React.createElement('p', { className: "text-red-500 text-xs text-center pt-1" }, error),
+                    React.createElement('button', 
+                        {
+                            type: "submit",
+                            className: "w-full py-3 mt-4 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        },
+                        isRegistering ? 'Register' : 'Sign In'
+                    )
+                )
+            )
+        )
+    );
+};
+
+export default Login;

@@ -1,0 +1,100 @@
+import React from 'react';
+import { useAppContext } from '../context/AppContext.js';
+import { sendEmail } from '../services/emailService.js';
+import { CloseIcon } from './icons/IconComponents.js';
+import { Folder } from '../types.js';
+
+const ComposeEmail = () => {
+  const { state, dispatch } = useAppContext();
+  const { composeEmail, userProfile } = state;
+
+  const handleClose = () => {
+    dispatch({ type: 'CLOSE_COMPOSE' });
+  };
+
+  const handleSend = async () => {
+    if (composeEmail.recipient && composeEmail.subject && composeEmail.body && userProfile) {
+      const emailToSend = {
+          ...composeEmail,
+          sender: userProfile.email || 'You',
+          senderEmail: userProfile.email || '',
+          timestamp: new Date().toLocaleString(),
+          read: true,
+          folder: Folder.SENT,
+      };
+      
+      const result = await sendEmail(userProfile.uid, emailToSend);
+      
+      // Always close compose modal and switch to sent folder
+      dispatch({ type: 'SEND_COMPOSE' });
+      dispatch({ type: 'SELECT_FOLDER', payload: Folder.SENT });
+
+      // If sending failed or had a warning (e.g., recipient not found), show an alert.
+      if (!result.success) {
+          alert(result.message);
+      }
+
+    } else {
+        alert("Please fill in the recipient, subject, and body to send an email.");
+    }
+  };
+
+  const handleChange = (e) => {
+    dispatch({ type: 'UPDATE_COMPOSE', payload: { [e.target.name]: e.target.value } });
+  };
+
+  return (
+    React.createElement('div', { className: "fixed inset-0 bg-black/50 flex items-end justify-center z-50" },
+      React.createElement('div', { className: "bg-white w-full max-w-2xl h-[70%] rounded-t-lg shadow-2xl flex flex-col" },
+        React.createElement('header', { className: "flex items-center justify-between p-4 bg-gray-100 rounded-t-lg border-b border-gray-200" },
+          React.createElement('h2', { className: "text-lg font-semibold text-gray-800" }, "New Message"),
+          React.createElement('button', { onClick: handleClose, className: "p-1 rounded-full text-gray-500 hover:bg-gray-200 hover:text-gray-800" },
+            React.createElement(CloseIcon, null)
+          )
+        ),
+        React.createElement('div', { className: "p-4 flex-1 flex flex-col" },
+          React.createElement('input',
+            {
+              type: "email",
+              name: "recipient",
+              placeholder: "To",
+              value: composeEmail.recipient || '',
+              onChange: handleChange,
+              className: "w-full bg-transparent p-2 border-b border-gray-300 focus:outline-none focus:border-blue-500"
+            }
+          ),
+          React.createElement('input',
+            {
+              type: "text",
+              name: "subject",
+              placeholder: "Subject",
+              value: composeEmail.subject || '',
+              onChange: handleChange,
+              className: "w-full bg-transparent p-2 border-b border-gray-300 focus:outline-none focus:border-blue-500"
+            }
+          ),
+          React.createElement('textarea',
+            {
+              name: "body",
+              placeholder: "Compose email...",
+              value: composeEmail.body || '',
+              onChange: handleChange,
+              className: "flex-1 w-full bg-transparent p-2 mt-4 resize-none focus:outline-none"
+            }
+          )
+        ),
+        React.createElement('footer', { className: "p-4 border-t border-gray-200 bg-gray-50 rounded-b-lg" },
+          React.createElement('button',
+            {
+              onClick: handleSend,
+              className: "bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors"
+            },
+            "Send"
+          )
+        )
+      )
+    )
+  );
+};
+
+export default ComposeEmail;

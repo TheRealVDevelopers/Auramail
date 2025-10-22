@@ -16,7 +16,7 @@ export const setupNewUser = async (user: User): Promise<void> => {
         uid: user.uid,
         email: user.email?.trim().toLowerCase() || null, // Normalize to lowercase and trim whitespace
         createdAt: serverTimestamp(),
-    });
+    }, { merge: true });
 
     // 2. Seed initial emails for the new user
     await seedEmailsForNewUser(user.uid);
@@ -27,20 +27,36 @@ export const setupNewUser = async (user: User): Promise<void> => {
  * @returns The user's UID string, or null if not found.
  */
 const findUserByEmail = async (email: string): Promise<string | null> => {
-    const usersCol = getUsersCollection();
-    // Normalize the input email by trimming whitespace and converting to lowercase to match the stored format.
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) {
-        return null; // Don't query for an empty or whitespace-only string
-    }
-    const q = query(usersCol, where('email', '==', normalizedEmail));
-    const querySnapshot = await getDocs(q);
+    try {
+        const usersCol = getUsersCollection();
+        // Normalize the input email by trimming whitespace and converting to lowercase to match the stored format.
+        const normalizedEmail = email.trim().toLowerCase();
+        if (!normalizedEmail) {
+            console.log('findUserByEmail: Empty email provided');
+            return null; // Don't query for an empty or whitespace-only string
+        }
+        
+        console.log('findUserByEmail: Searching for email:', normalizedEmail);
+        const q = query(usersCol, where('email', '==', normalizedEmail));
+        const querySnapshot = await getDocs(q);
 
-    if (querySnapshot.empty) {
-        return null;
+        console.log('findUserByEmail: Query result size:', querySnapshot.size);
+        
+        if (querySnapshot.empty) {
+            console.log('findUserByEmail: No user found with email:', normalizedEmail);
+            return null;
+        }
+        
+        // Get the UID from the document data instead of the document ID
+        const userDoc = querySnapshot.docs[0];
+        const userData = userDoc.data();
+        const uid = userData.uid || userDoc.id; // Fallback to document ID if uid field is missing
+        console.log('findUserByEmail: Found user with UID:', uid);
+        return uid;
+    } catch (error) {
+        console.error('findUserByEmail: Error occurred:', error);
+        throw error;
     }
-    // Assuming email is unique, there should be only one document.
-    return querySnapshot.docs[0].id;
 };
 
 
@@ -89,6 +105,7 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
             folder: Folder.SENT,
             read: true,
             timestamp: serverTimestamp(),
+            senderUid: senderUid,
         };
         const senderEmailsCol = getEmailsCollection(senderUid);
         await addDoc(senderEmailsCol, sentEmailData);
@@ -108,13 +125,13 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
         if (recipientUid) {
              // Handle sending to self
             if (recipientUid === senderUid) {
-                const selfInboxEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp() };
+                const selfInboxEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp(), senderUid: senderUid };
                 await addDoc(getEmailsCollection(senderUid), selfInboxEmailData);
                 return { success: true, message: 'Email sent successfully to yourself!' };
             }
 
             // Deliver a copy to recipient's inbox
-            const receivedEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp() };
+            const receivedEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp(), senderUid: senderUid };
             await addDoc(getEmailsCollection(recipientUid), receivedEmailData);
             return { success: true, message: 'Email sent successfully!' };
         } else {
@@ -124,7 +141,7 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
         console.error("Delivery Error:", error);
         return { 
             success: false, 
-            message: `CRITICAL: Email delivery failed due to a database error. This usually means a database index is missing. Please OPEN THE DEVELOPER CONSOLE (F12), find the error message, and CLICK THE LINK in it to create the required index. Your email has been saved in 'Sent'.` 
+            message: `Email delivery failed: ${error.message || 'Unknown error'}. Your email has been saved in 'Sent'.` 
         };
     }
 };

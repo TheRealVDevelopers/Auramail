@@ -8,7 +8,22 @@ import { INITIAL_SYSTEM_PROMPT } from '../constants';
 import { decode, encode, decodeAudioData } from '../utils/audioUtils';
 import { MicIcon, PaperAirplaneIcon, PauseIcon } from './icons/IconComponents';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+// Lazily initialize the GoogleGenAI client to avoid crashing the app
+// when an API key is not provided in production.
+const GEMINI_API_KEY = (typeof window !== 'undefined'
+    ? (window as any).GEMINI_API_KEY
+    : undefined) || (process.env.GEMINI_API_KEY as string | undefined) || (process.env.API_KEY as string | undefined);
+
+let aiClient: GoogleGenAI | null = null;
+const getAiClient = (): GoogleGenAI | null => {
+    if (aiClient) return aiClient;
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'undefined') {
+        console.warn('Gemini API key is not configured. Chatbot features are disabled.');
+        return null;
+    }
+    aiClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    return aiClient;
+};
 
 const Chatbot: React.FC = () => {
     const { state, dispatch } = useAppContext();
@@ -120,7 +135,13 @@ const Chatbot: React.FC = () => {
         
         const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails);
 
-        sessionPromiseRef.current = ai.live.connect({
+        const client = getAiClient();
+        if (!client) {
+            setTranscript(prev => [...prev, { id: `warn-${Date.now()}`, text: 'Chat features are unavailable: missing API key.', isUser: false, timestamp: Date.now() }]);
+            setIsListening(false);
+            return;
+        }
+        sessionPromiseRef.current = client.live.connect({
             model: 'gemini-2.5-flash-native-audio-preview-09-2025',
             config: {
                 systemInstruction,
@@ -192,7 +213,12 @@ const Chatbot: React.FC = () => {
             const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails);
             let responseText = '';
             
-            const responseStream = await ai.models.generateContentStream({
+            const client = getAiClient();
+            if (!client) {
+                setTranscript(prev => [...prev, { id: `warn-${Date.now()}`, text: 'Chat features are unavailable: missing API key.', isUser: false, timestamp: Date.now() }]);
+                return;
+            }
+            const responseStream = await client.models.generateContentStream({
                 model: 'gemini-2.5-flash',
                 contents: {
                     role: 'user',

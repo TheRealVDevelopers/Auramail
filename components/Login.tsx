@@ -27,7 +27,9 @@ const Login: React.FC = () => {
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 await setupNewUser(userCredential.user);
             } else {
-                await signInWithEmailAndPassword(auth, email, password);
+                const cred = await signInWithEmailAndPassword(auth, email, password);
+                // Ensure profile doc exists for older accounts or if profile was removed
+                await setupNewUser(cred.user);
             }
         } catch (err: any) {
             setError(err.message.replace('Firebase: ', ''));

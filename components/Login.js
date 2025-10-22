@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { auth } from '../firebase.js';
+import { auth, db } from '../firebase.js';
 import { setupNewUser } from '../services/emailService.js';
 import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents.js';
 import { useAppContext } from '../context/AppContext.js';
 
 const Login = () => {
     const { state } = useAppContext();
+    const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
@@ -50,6 +51,7 @@ const Login = () => {
         setIsVoiceLoginActive(false);
         setVoiceStep('idle');
         setVoiceFeedback('');
+        setUsername('');
         setEmail('');
         setPassword('');
         setError(null);
@@ -62,6 +64,7 @@ const Login = () => {
             onComplete?.();
             return;
         }
+        speechSynthesis.cancel(); // Prevent queueing issues
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = state.currentLanguage;
         utterance.onend = () => {
@@ -113,22 +116,54 @@ const Login = () => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError(null);
-        if (password.length < 6) {
-            setError('Password must be at least 6 characters.');
-            if (isVoiceLoginActive) {
-                speak("Password must be at least 6 characters. Please try again.", cancelVoiceLogin);
-            }
-            return;
-        }
-        
+
         try {
             if (isRegisteringRef.current) {
-                // Fix: Use v8 `auth.createUserWithEmailAndPassword` method
+                // REGISTER LOGIC
+                if (!username.trim()) {
+                    setError('Username is required.');
+                    return;
+                }
+                if (password.length < 6) {
+                    setError('Password must be at least 6 characters.');
+                    if (isVoiceLoginActive) speak("Password must be at least 6 characters. Please try again.", cancelVoiceLogin);
+                    return;
+                }
+                const normalizedUsername = username.trim().toLowerCase();
+                const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
+                if (usernameDoc.exists) {
+                    const errText = 'This username is already taken. Please choose another.';
+                    setError(errText);
+                    if (isVoiceLoginActive) speak(errText, cancelVoiceLogin);
+                    return;
+                }
+                
                 const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-                await setupNewUser(userCredential.user);
+                await setupNewUser(userCredential.user, username);
             } else {
-                // Fix: Use v8 `auth.signInWithEmailAndPassword` method
-                await auth.signInWithEmailAndPassword(email, password);
+                // LOGIN LOGIC
+                let loginEmail = email;
+                if (!email.trim().includes('@')) {
+                    const normalizedUsername = email.trim().toLowerCase();
+                    const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
+                    if (!usernameDoc.exists) {
+                        const errText = "User with that username not found.";
+                        setError(errText);
+                        if (isVoiceLoginActive) speak(errText, cancelVoiceLogin);
+                        return;
+                    }
+                    const uid = usernameDoc.data().uid;
+                    const userDoc = await db.collection('users').doc(uid).get();
+                    if (!userDoc.exists || !userDoc.data()?.email) {
+                        const errText = "Could not find user details. Please contact support.";
+                        setError(errText);
+                        if (isVoiceLoginActive) speak(errText, cancelVoiceLogin);
+                        return;
+                    }
+                    loginEmail = userDoc.data().email;
+                }
+                
+                await auth.signInWithEmailAndPassword(loginEmail, password);
             }
         } catch (err) {
             const errorMessage = err.message.replace('Firebase: ', '');
@@ -152,17 +187,24 @@ const Login = () => {
             case 'action':
                 if (lowerText.includes('register')) {
                     setIsRegistering(true);
-                    setVoiceFeedback('Registering. What is your email?');
-                    speak('Registering. What is your email?', startListening);
+                    setVoiceFeedback('Registering. What username would you like?');
+                    speak('Registering. What username would you like?', startListening);
+                    setVoiceStep('username');
                 } else {
                     setIsRegistering(false);
-                    setVoiceFeedback('Logging in. What is your email?');
-                    speak('Logging in. What is your email?', startListening);
+                    setVoiceFeedback('Logging in. What is your email or username?');
+                    speak('Logging in. What is your email or username?', startListening);
+                    setVoiceStep('email');
                 }
+                break;
+            case 'username':
+                setUsername(text.trim());
+                setVoiceFeedback('Got it. Now, what is your email?');
+                speak('Got it. Now, what is your email?', startListening);
                 setVoiceStep('email');
                 break;
             case 'email':
-                const parsedEmail = lowerText.split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
+                const parsedEmail = lowerText.includes('at') ? lowerText.split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('') : text.trim();
                 setEmail(parsedEmail);
                 setVoiceFeedback('Got it. What is your password?');
                 speak('Got it. What is your password?', startListening);
@@ -179,9 +221,7 @@ const Login = () => {
                  if (lowerText.includes('yes') || lowerText.includes('proceed') || lowerText.includes('submit')) {
                     const actionText = isRegisteringRef.current ? 'Registering...' : 'Signing in...';
                     setVoiceFeedback(actionText);
-                    speak(actionText, () => {
-                        handleSubmit({ preventDefault: () => {} });
-                    });
+                    handleSubmit({ preventDefault: () => {} });
                  } else {
                     speak("Okay, I'll cancel.", cancelVoiceLogin);
                  }
@@ -203,6 +243,9 @@ const Login = () => {
     useEffect(() => {
         return () => { 
             stopListening();
+            if ('speechSynthesis' in window) {
+                speechSynthesis.cancel();
+            }
             audioContextRef.current?.close().catch(console.error);
          };
     }, [stopListening]);
@@ -276,8 +319,29 @@ const Login = () => {
                 ),
 
                 React.createElement('form', { onSubmit: handleSubmit, className: "space-y-4" },
+                    isRegistering && (
+                         React.createElement('div', null,
+                            React.createElement('label', { htmlFor: "username", className: "text-sm font-medium text-gray-700" }, "Username"),
+                            React.createElement('div', { className: "relative mt-1" },
+                                React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
+                                    React.createElement(UserIcon, { className: "w-5 h-5 text-gray-400" })
+                                ),
+                                React.createElement('input', 
+                                    { 
+                                        id: "username", 
+                                        type: "text", 
+                                        value: username, 
+                                        onChange: (e) => setUsername(e.target.value), 
+                                        placeholder: "your_username", 
+                                        required: true,
+                                        className: "w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
+                                    }
+                                )
+                            )
+                        )
+                    ),
                     React.createElement('div', null,
-                        React.createElement('label', { htmlFor: "email", className: "text-sm font-medium text-gray-700" }, "Email"),
+                        React.createElement('label', { htmlFor: "email", className: "text-sm font-medium text-gray-700" }, isRegistering ? 'Email' : 'Email or Username'),
                         React.createElement('div', { className: "relative mt-1" },
                             React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
                                 React.createElement(UserIcon, { className: "w-5 h-5 text-gray-400" })
@@ -285,10 +349,10 @@ const Login = () => {
                             React.createElement('input', 
                                 { 
                                     id: "email", 
-                                    type: "email", 
+                                    type: isRegistering ? 'email' : 'text',
                                     value: email, 
                                     onChange: (e) => setEmail(e.target.value), 
-                                    placeholder: "email@example.com", 
+                                    placeholder: isRegistering ? "email@example.com" : "username or email@example.com",
                                     required: true,
                                     className: "w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
                                 }

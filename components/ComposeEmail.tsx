@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
 import { sendEmail } from '../services/emailService';
@@ -17,7 +16,7 @@ const ComposeEmail: React.FC = () => {
     if (composeEmail.recipient && composeEmail.subject && composeEmail.body && userProfile) {
       const emailToSend = {
           ...composeEmail,
-          sender: userProfile.email || 'You',
+          sender: userProfile.name || userProfile.email || 'You',
           senderEmail: userProfile.email || '',
           timestamp: new Date().toLocaleString(),
           read: true,

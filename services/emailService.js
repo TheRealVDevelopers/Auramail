@@ -7,6 +7,7 @@ import { Folder } from '../types.js';
 
 const getEmailsCollection = (userId) => db.collection('users').doc(userId).collection('emails');
 const getUsersCollection = () => db.collection('users');
+const getUsernamesCollection = () => db.collection('usernames');
 
 /**
  * Gets the count of unread emails in a specific folder.
@@ -29,20 +30,37 @@ export const getUnreadCount = async (userId, folder) => {
 
 
 /**
- * Sets up a new user by creating their profile document and seeding initial emails.
+ * Sets up a new user by creating their profile document, claiming their username, and seeding initial emails.
  */
 // Fix: Use `firebase.User` type from v8 SDK.
-export const setupNewUser = async (user) => {
-    // 1. Create user profile document, storing the email in lowercase for consistent lookups.
+export const setupNewUser = async (user, username) => {
+    const normalizedUsername = username.trim().toLowerCase();
+
+    // Use a batch write to ensure atomic operation
+    const batch = db.batch();
+
+    // 1. Create user profile document
     const userDocRef = db.collection('users').doc(user.uid);
-    // Fix: Use v8 `.set()` method and `firebase.firestore.FieldValue.serverTimestamp()`
-    await userDocRef.set({
+    batch.set(userDocRef, {
         uid: user.uid,
-        email: user.email?.trim().toLowerCase() || null, // Normalize to lowercase and trim whitespace
+        email: user.email?.trim().toLowerCase() || null,
+        username: normalizedUsername,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
 
-    // 2. Seed initial emails for the new user
+    // 2. Create username document to enforce uniqueness and for lookups
+    const usernameDocRef = db.collection('usernames').doc(normalizedUsername);
+    batch.set(usernameDocRef, { uid: user.uid });
+    
+    // Commit the batch
+    await batch.commit();
+
+    // 3. Update the user's profile in Firebase Auth itself
+    await user.updateProfile({
+        displayName: username.trim(), // Use the original casing for display
+    });
+
+    // 4. Seed initial emails for the new user
     await seedEmailsForNewUser(user.uid);
 };
 
@@ -66,6 +84,21 @@ const findUserByEmail = async (email) => {
     }
     // Assuming email is unique, there should be only one document.
     return querySnapshot.docs[0].id;
+};
+
+/**
+ * Finds a user's UID by their username.
+ * @returns The user's UID string, or null if not found.
+ */
+const findUserByUsername = async (username) => {
+    const normalizedUsername = username.trim().toLowerCase();
+    if (!normalizedUsername) return null;
+    
+    const usernameDoc = await getUsernamesCollection().doc(normalizedUsername).get();
+    if (usernameDoc.exists) {
+        return usernameDoc.data()?.uid || null;
+    }
+    return null;
 };
 
 
@@ -133,9 +166,16 @@ export const sendEmail = async (senderUid, email) => {
         return { success: true, message: 'Email saved to Sent folder.' };
     }
 
-    // Step 2: Try to deliver to the recipient.
+    // Step 2: Try to deliver to the recipient by username or email.
     try {
-        const recipientUid = await findUserByEmail(email.recipient);
+        let recipientUid = null;
+        const recipientIdentifier = email.recipient.trim();
+
+        if (recipientIdentifier.includes('@')) {
+            recipientUid = await findUserByEmail(recipientIdentifier);
+        } else {
+            recipientUid = await findUserByUsername(recipientIdentifier);
+        }
 
         if (recipientUid) {
              // Handle sending to self
@@ -182,6 +222,8 @@ export const seedEmailsForNewUser = async (userId) => {
     
     if (snapshot.empty) {
         console.log(`Seeding emails for new user: ${userId}`);
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userEmail = userDoc.data()?.email || 'you@example.com';
         // Fix: Use v8 `db.batch()`
         const batch = db.batch();
 
@@ -190,7 +232,6 @@ export const seedEmailsForNewUser = async (userId) => {
             threadId: 't1',
             sender: 'GitHub',
             senderEmail: 'noreply@github.com',
-            recipient: 'you@example.com',
             subject: '[voxmail] Your build has passed!',
             body: 'Your recent commit to the main branch of voxmail has passed all checks. Great job!',
             read: false,
@@ -200,7 +241,6 @@ export const seedEmailsForNewUser = async (userId) => {
             threadId: 't2',
             sender: 'Figma',
             senderEmail: 'team@figma.com',
-            recipient: 'you@example.com',
             subject: 'Updates to our collaboration features',
             body: 'Hi there, we have some exciting new updates to make collaboration even smoother. Check out our latest blog post to learn more.',
             read: false,
@@ -210,7 +250,6 @@ export const seedEmailsForNewUser = async (userId) => {
             threadId: 't3',
             sender: 'Alice',
             senderEmail: 'alice@example.com',
-            recipient: 'you@example.com',
             subject: 'Lunch on Friday?',
             body: 'Hey! Are you free for lunch this Friday? I was thinking we could try that new cafe downtown. Let me know!',
             read: true,
@@ -221,7 +260,7 @@ export const seedEmailsForNewUser = async (userId) => {
         MOCK_EMAILS_TEMPLATE.forEach(email => {
             // Fix: Use v8 `.doc()` to create a new doc ref for a batch
             const docRef = emailsCol.doc();
-            batch.set(docRef, { ...email, timestamp: firebase.firestore.FieldValue.serverTimestamp() });
+            batch.set(docRef, { ...email, recipient: userEmail, timestamp: firebase.firestore.FieldValue.serverTimestamp() });
         });
 
         await batch.commit();

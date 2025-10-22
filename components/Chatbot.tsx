@@ -246,7 +246,14 @@ const Chatbot: React.FC = () => {
                 const lowerText = text.toLowerCase();
                 if (lowerText.includes('send')) {
                     if (state.userProfile) {
-                        const emailToSend = { ...updatedDraft, sender: state.userProfile.email || 'You', senderEmail: state.userProfile.email || '', timestamp: new Date().toLocaleString(), read: true, folder: Folder.SENT };
+                        const emailToSend = { 
+                            ...updatedDraft, 
+                            sender: state.userProfile.name || state.userProfile.email || 'You', 
+                            senderEmail: state.userProfile.email || '', 
+                            timestamp: new Date().toLocaleString(), 
+                            read: true, 
+                            folder: Folder.SENT 
+                        };
                         const result = await sendEmail(state.userProfile.uid, emailToSend);
                         await speak(result.message);
                         if (result.success) dispatch({ type: 'SELECT_FOLDER', payload: Folder.SENT });

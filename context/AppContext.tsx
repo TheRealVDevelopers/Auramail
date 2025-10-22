@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
+// Fix: Use v8 namespaced imports and types for Firebase
+// Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/auth';
 import { auth } from '../firebase';
 import { Email, Folder, UserProfile } from '../types';
 import { getEmails } from '../services/emailService';
@@ -15,6 +18,7 @@ interface AppState {
   loading: boolean;
   error: string | null;
   isChatbotOpen: boolean;
+  currentLanguage: string;
 }
 
 type Action =
@@ -32,7 +36,8 @@ type Action =
   | { type: 'UPDATE_COMPOSE'; payload: Partial<Email> }
   | { type: 'SEND_COMPOSE' }
   | { type: 'CLOSE_COMPOSE' }
-  | { type: 'TOGGLE_CHATBOT' };
+  | { type: 'TOGGLE_CHATBOT' }
+  | { type: 'SET_LANGUAGE'; payload: string };
 
 const initialState: AppState = {
   isAuthenticated: false,
@@ -45,6 +50,7 @@ const initialState: AppState = {
   loading: true, // Start loading to check auth status
   error: null,
   isChatbotOpen: false,
+  currentLanguage: 'en-US',
 };
 
 const appReducer = (state: AppState, action: Action): AppState => {
@@ -91,6 +97,8 @@ const appReducer = (state: AppState, action: Action): AppState => {
         return { ...state, isComposeOpen: false, composeEmail: {} };
     case 'TOGGLE_CHATBOT':
         return { ...state, isChatbotOpen: !state.isChatbotOpen };
+    case 'SET_LANGUAGE':
+        return { ...state, currentLanguage: action.payload };
     default:
       return state;
   }
@@ -108,7 +116,9 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user: User | null) => {
+    // Fix: Use v8 `auth.onAuthStateChanged` method and `firebase.User` type
+    // The firebase.User type is available on the global firebase object from the script tag.
+    const unsubscribe = auth.onAuthStateChanged((user: firebase.User | null) => {
       if (user) {
         const userProfile: UserProfile = {
           uid: user.uid,

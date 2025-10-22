@@ -194,7 +194,7 @@ const Login: React.FC = () => {
                 setVoiceStep('email');
                 break;
             case 'email':
-                const parsedEmail = lowerText.replace(/\s/g, '').replace(/at/g, '@').replace(/dot/g, '.');
+                const parsedEmail = lowerText.split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
                 setEmail(parsedEmail);
                 setVoiceFeedback('Got it. What is your password?');
                 speak('Got it. What is your password?', startListening);

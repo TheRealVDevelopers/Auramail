@@ -190,7 +190,8 @@ const Chatbot = () => {
 
         switch (composeStateRef.current.step) {
             case 'recipient':
-                updatedDraft.recipient = text;
+                const parsedRecipient = text.toLowerCase().split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
+                updatedDraft.recipient = parsedRecipient;
                 nextStep = 'subject';
                 speak("Got it. What's the subject?");
                 break;
@@ -241,8 +242,13 @@ const Chatbot = () => {
                 }
                 break;
             case 'change_field':
-                if (composeStateRef.current.fieldToChange) {
-                    updatedDraft[composeStateRef.current.fieldToChange] = text;
+                const fieldToChange = composeStateRef.current.fieldToChange;
+                if (fieldToChange) {
+                    let newValue = text;
+                    if (fieldToChange === 'recipient') {
+                        newValue = text.toLowerCase().split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
+                    }
+                    updatedDraft[fieldToChange] = newValue;
                     nextStep = 'confirm';
                     nextFieldToChange = '';
                     setTranscript(prev => [...prev, {

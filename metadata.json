@@ -1,0 +1,7 @@
+{
+  "name": "VoxMail - The Voice-Powered Email Client",
+  "description": "An accessible, Gmail-like email client designed for visually impaired users, featuring a powerful, multilingual voice-controlled chatbot for complete hands-free operation.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

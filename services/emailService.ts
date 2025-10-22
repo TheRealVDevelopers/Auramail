@@ -1,10 +1,29 @@
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, writeBatch, serverTimestamp, Timestamp, setDoc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, writeBatch, serverTimestamp, Timestamp, setDoc, getDoc, getCountFromServer } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 import { db } from '../firebase';
 import { Email, Folder } from '../types';
 
 const getEmailsCollection = (userId: string) => collection(db, 'users', userId, 'emails');
 const getUsersCollection = () => collection(db, 'users');
+
+/**
+ * Gets the count of unread emails in a specific folder.
+ * This requires a composite index on (folder, read) in Firestore.
+ */
+export const getUnreadCount = async (userId: string, folder: Folder): Promise<number> => {
+    try {
+        const emailsCol = getEmailsCollection(userId);
+        const q = query(emailsCol, where('folder', '==', folder), where('read', '==', false));
+        const snapshot = await getCountFromServer(q);
+        return snapshot.data().count;
+    } catch (error) {
+        console.error("Error getting unread count:", error);
+        // This error often indicates a missing Firestore index.
+        // The console will provide a link to create it.
+        return 0;
+    }
+};
+
 
 /**
  * Sets up a new user by creating their profile document and seeding initial emails.
@@ -16,7 +35,7 @@ export const setupNewUser = async (user: User): Promise<void> => {
         uid: user.uid,
         email: user.email?.trim().toLowerCase() || null, // Normalize to lowercase and trim whitespace
         createdAt: serverTimestamp(),
-    }, { merge: true });
+    });
 
     // 2. Seed initial emails for the new user
     await seedEmailsForNewUser(user.uid);
@@ -27,36 +46,20 @@ export const setupNewUser = async (user: User): Promise<void> => {
  * @returns The user's UID string, or null if not found.
  */
 const findUserByEmail = async (email: string): Promise<string | null> => {
-    try {
-        const usersCol = getUsersCollection();
-        // Normalize the input email by trimming whitespace and converting to lowercase to match the stored format.
-        const normalizedEmail = email.trim().toLowerCase();
-        if (!normalizedEmail) {
-            console.log('findUserByEmail: Empty email provided');
-            return null; // Don't query for an empty or whitespace-only string
-        }
-        
-        console.log('findUserByEmail: Searching for email:', normalizedEmail);
-        const q = query(usersCol, where('email', '==', normalizedEmail));
-        const querySnapshot = await getDocs(q);
-
-        console.log('findUserByEmail: Query result size:', querySnapshot.size);
-        
-        if (querySnapshot.empty) {
-            console.log('findUserByEmail: No user found with email:', normalizedEmail);
-            return null;
-        }
-        
-        // Get the UID from the document data instead of the document ID
-        const userDoc = querySnapshot.docs[0];
-        const userData = userDoc.data();
-        const uid = userData.uid || userDoc.id; // Fallback to document ID if uid field is missing
-        console.log('findUserByEmail: Found user with UID:', uid);
-        return uid;
-    } catch (error) {
-        console.error('findUserByEmail: Error occurred:', error);
-        throw error;
+    const usersCol = getUsersCollection();
+    // Normalize the input email by trimming whitespace and converting to lowercase to match the stored format.
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+        return null; // Don't query for an empty or whitespace-only string
     }
+    const q = query(usersCol, where('email', '==', normalizedEmail));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+        return null;
+    }
+    // Assuming email is unique, there should be only one document.
+    return querySnapshot.docs[0].id;
 };
 
 
@@ -105,7 +108,6 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
             folder: Folder.SENT,
             read: true,
             timestamp: serverTimestamp(),
-            senderUid: senderUid,
         };
         const senderEmailsCol = getEmailsCollection(senderUid);
         await addDoc(senderEmailsCol, sentEmailData);
@@ -125,13 +127,13 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
         if (recipientUid) {
              // Handle sending to self
             if (recipientUid === senderUid) {
-                const selfInboxEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp(), senderUid: senderUid };
+                const selfInboxEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp() };
                 await addDoc(getEmailsCollection(senderUid), selfInboxEmailData);
                 return { success: true, message: 'Email sent successfully to yourself!' };
             }
 
             // Deliver a copy to recipient's inbox
-            const receivedEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp(), senderUid: senderUid };
+            const receivedEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp() };
             await addDoc(getEmailsCollection(recipientUid), receivedEmailData);
             return { success: true, message: 'Email sent successfully!' };
         } else {
@@ -141,7 +143,7 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
         console.error("Delivery Error:", error);
         return { 
             success: false, 
-            message: `Email delivery failed: ${error.message || 'Unknown error'}. Your email has been saved in 'Sent'.` 
+            message: `CRITICAL: Email delivery failed due to a database error. This usually means a database index is missing. Please OPEN THE DEVELOPER CONSOLE (F12), find the error message, and CLICK THE LINK in it to create the required index. Your email has been saved in 'Sent'.` 
         };
     }
 };

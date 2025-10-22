@@ -1,3 +1,4 @@
+import React from 'react';
 
 export interface Email {
   id: string;
@@ -33,7 +34,7 @@ export interface Language {
 
 export interface Transcript {
   id: string;
-  text: string;
+  text: string | React.ReactNode;
   isUser: boolean;
   timestamp: number;
 }

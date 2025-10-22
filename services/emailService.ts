@@ -1,12 +1,10 @@
-// Fix: Update Firebase imports to use the v9 compatibility layer (compat) to resolve type errors.
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/firestore';
-import 'firebase/compat/auth';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, writeBatch, serverTimestamp, Timestamp, setDoc, getDoc, getCountFromServer } from 'firebase/firestore';
+import { User } from 'firebase/auth';
 import { db } from '../firebase';
 import { Email, Folder } from '../types';
 
-const getEmailsCollection = (userId: string) => db.collection('users').doc(userId).collection('emails');
-const getUsersCollection = () => db.collection('users');
+const getEmailsCollection = (userId: string) => collection(db, 'users', userId, 'emails');
+const getUsersCollection = () => collection(db, 'users');
 
 /**
  * Gets the count of unread emails in a specific folder.
@@ -15,10 +13,9 @@ const getUsersCollection = () => db.collection('users');
 export const getUnreadCount = async (userId: string, folder: Folder): Promise<number> => {
     try {
         const emailsCol = getEmailsCollection(userId);
-        // Fix: Use v8 `where` and `get` methods. Replace `getCountFromServer` with `snapshot.size`.
-        const q = emailsCol.where('folder', '==', folder).where('read', '==', false);
-        const snapshot = await q.get();
-        return snapshot.size;
+        const q = query(emailsCol, where('folder', '==', folder), where('read', '==', false));
+        const snapshot = await getCountFromServer(q);
+        return snapshot.data().count;
     } catch (error) {
         console.error("Error getting unread count:", error);
         // This error often indicates a missing Firestore index.
@@ -31,20 +28,18 @@ export const getUnreadCount = async (userId: string, folder: Folder): Promise<nu
 /**
  * Sets up a new user by creating their profile document and seeding initial emails.
  */
-// Fix: Use `firebase.User` type from v8 SDK. This type is available via compat imports.
-export const setupNewUser = async (user: firebase.User): Promise<void> => {
+export const setupNewUser = async (user: User): Promise<void> => {
     // 1. Create user profile document, storing the email in lowercase for consistent lookups.
-    const userDocRef = db.collection('users').doc(user.uid);
-    // Fix: Use v8 `.set()` method and `firebase.firestore.FieldValue.serverTimestamp()`
-    await userDocRef.set({
+    const userDocRef = doc(db, 'users', user.uid);
+    await setDoc(userDocRef, {
         uid: user.uid,
         email: user.email?.trim().toLowerCase() || null, // Normalize to lowercase and trim whitespace
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdAt: serverTimestamp(),
     });
 
     // 2. Seed initial emails for the new user
     await seedEmailsForNewUser(user.uid);
-};
+}
 
 /**
  * Finds a user's UID by their email address, searching in a case-insensitive and whitespace-insensitive manner.
@@ -57,9 +52,8 @@ const findUserByEmail = async (email: string): Promise<string | null> => {
     if (!normalizedEmail) {
         return null; // Don't query for an empty or whitespace-only string
     }
-    // Fix: Use v8 `where` and `get` methods.
-    const q = usersCol.where('email', '==', normalizedEmail);
-    const querySnapshot = await q.get();
+    const q = query(usersCol, where('email', '==', normalizedEmail));
+    const querySnapshot = await getDocs(q);
 
     if (querySnapshot.empty) {
         return null;
@@ -71,20 +65,16 @@ const findUserByEmail = async (email: string): Promise<string | null> => {
 
 export const getEmails = async (userId: string, folder: Folder): Promise<Email[]> => {
     const emailsCol = getEmailsCollection(userId);
-    // Fix: Use v8 `where` and `get` methods.
-    const q = emailsCol.where('folder', '==', folder);
-    const querySnapshot = await q.get();
+    // The query is modified to remove the `orderBy` clause, which requires a composite index.
+    const q = query(emailsCol, where('folder', '==', folder));
+    const querySnapshot = await getDocs(q);
 
     // Map to an intermediate array that includes the original Date object for reliable sorting.
     const tempEmails = querySnapshot.docs.map(doc => {
         const data = doc.data();
-        // Fix: Use `firebase.firestore.Timestamp` for type casting
-        const date = (data.timestamp as firebase.firestore.Timestamp)?.toDate() ?? new Date();
-        // Fix: Nest the document data instead of spreading it. Spreading a `DocumentData`
-        // object can cause TypeScript to lose track of the specific properties, leading to
-        // type errors in subsequent operations.
+        const date = (data.timestamp as Timestamp)?.toDate() ?? new Date();
         return {
-            data: data,
+            ...data,
             id: doc.id,
             date: date,
         };
@@ -94,18 +84,17 @@ export const getEmails = async (userId: string, folder: Folder): Promise<Email[]
     tempEmails.sort((a, b) => b.date.getTime() - a.date.getTime());
 
     // Map to the final Email[] format, converting the timestamp to a string for display.
-    const emails: Email[] = tempEmails.map(item => ({
-        id: item.id,
-        // Fix: Access properties from the nested `data` object to resolve property not found errors.
-        threadId: item.data.threadId,
-        sender: item.data.sender,
-        senderEmail: item.data.senderEmail,
-        recipient: item.data.recipient,
-        subject: item.data.subject,
-        body: item.data.body,
-        read: item.data.read,
-        folder: item.data.folder,
-        timestamp: item.date.toLocaleString(),
+    const emails: Email[] = tempEmails.map(data => ({
+        id: data.id,
+        threadId: data.threadId,
+        sender: data.sender,
+        senderEmail: data.senderEmail,
+        recipient: data.recipient,
+        subject: data.subject,
+        body: data.body,
+        read: data.read,
+        folder: data.folder,
+        timestamp: data.date.toLocaleString(),
     }));
     
     return emails;
@@ -118,12 +107,10 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
             ...email,
             folder: Folder.SENT,
             read: true,
-            // Fix: Use `firebase.firestore.FieldValue.serverTimestamp()`
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+            timestamp: serverTimestamp(),
         };
         const senderEmailsCol = getEmailsCollection(senderUid);
-        // Fix: Use v8 `.add()` method
-        await senderEmailsCol.add(sentEmailData);
+        await addDoc(senderEmailsCol, sentEmailData);
     } catch (error) {
         console.error("Critical Error: Failed to save email to Sent folder.", error);
         return { success: false, message: "Could not save the email to your Sent folder. Please check your connection or permissions." };
@@ -140,14 +127,14 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
         if (recipientUid) {
              // Handle sending to self
             if (recipientUid === senderUid) {
-                const selfInboxEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: firebase.firestore.FieldValue.serverTimestamp() };
-                await getEmailsCollection(senderUid).add(selfInboxEmailData);
+                const selfInboxEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp() };
+                await addDoc(getEmailsCollection(senderUid), selfInboxEmailData);
                 return { success: true, message: 'Email sent successfully to yourself!' };
             }
 
             // Deliver a copy to recipient's inbox
-            const receivedEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: firebase.firestore.FieldValue.serverTimestamp() };
-            await getEmailsCollection(recipientUid).add(receivedEmailData);
+            const receivedEmailData = { ...email, folder: Folder.INBOX, read: false, timestamp: serverTimestamp() };
+            await addDoc(getEmailsCollection(recipientUid), receivedEmailData);
             return { success: true, message: 'Email sent successfully!' };
         } else {
             return { success: false, message: `Email saved to Sent, but recipient "${email.recipient}" was not found in VoxMail.` };
@@ -163,27 +150,23 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
 
 
 export const updateEmailFolder = async (userId: string, emailId: string, folder: Folder): Promise<void> => {
-    // Fix: Use v8 method chaining to get doc ref and `.update()` method
-    const emailDoc = db.collection('users').doc(userId).collection('emails').doc(emailId);
-    await emailDoc.update({ folder });
+    const emailDoc = doc(db, 'users', userId, 'emails', emailId);
+    await updateDoc(emailDoc, { folder });
 };
 
 export const markEmailAsRead = async (userId: string, emailId: string): Promise<void> => {
-    // Fix: Use v8 method chaining to get doc ref and `.update()` method
-    const emailDoc = db.collection('users').doc(userId).collection('emails').doc(emailId);
-    await emailDoc.update({ read: true });
+    const emailDoc = doc(db, 'users', userId, 'emails', emailId);
+    await updateDoc(emailDoc, { read: true });
 };
 
 export const seedEmailsForNewUser = async (userId: string): Promise<void> => {
     const emailsCol = getEmailsCollection(userId);
-    // Fix: Remove v9 `query` and use collection ref directly for `get`
-    const q = emailsCol;
-    const snapshot = await q.get();
+    const q = query(emailsCol);
+    const snapshot = await getDocs(q);
     
     if (snapshot.empty) {
         console.log(`Seeding emails for new user: ${userId}`);
-        // Fix: Use v8 `db.batch()`
-        const batch = db.batch();
+        const batch = writeBatch(db);
 
         const MOCK_EMAILS_TEMPLATE: Omit<Email, 'id' | 'timestamp'>[] = [
           {
@@ -219,9 +202,8 @@ export const seedEmailsForNewUser = async (userId: string): Promise<void> => {
         ];
 
         MOCK_EMAILS_TEMPLATE.forEach(email => {
-            // Fix: Use v8 `.doc()` to create a new doc ref for a batch
-            const docRef = emailsCol.doc();
-            batch.set(docRef, { ...email, timestamp: firebase.firestore.FieldValue.serverTimestamp() });
+            const docRef = doc(emailsCol);
+            batch.set(docRef, { ...email, timestamp: serverTimestamp() });
         });
 
         await batch.commit();

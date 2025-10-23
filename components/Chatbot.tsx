@@ -30,7 +30,7 @@ declare global {
     }
 }
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Type, FunctionDeclaration, FunctionCall, Modality } from '@google/genai';
 import { auth } from '../firebase';
 import { useAppContext } from '../context/AppContext';
@@ -55,7 +55,7 @@ const EmailPreview: React.FC<{ draft: Partial<Email> }> = ({ draft }) => (
 
 
 const Chatbot: React.FC = () => {
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY as string }), []);
+    const aiRef = useRef<GoogleGenAI | null>(null);
     const { state, dispatch } = useAppContext();
     const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
@@ -84,6 +84,13 @@ const Chatbot: React.FC = () => {
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
+
+    const getAiClient = useCallback(() => {
+        if (!aiRef.current) {
+            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+        }
+        return aiRef.current;
+    }, []);
 
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
@@ -127,6 +134,7 @@ const Chatbot: React.FC = () => {
         setChatbotStatus('SPEAKING');
 
         try {
+            const ai = getAiClient();
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
                 contents: [{ parts: [{ text: textToSpeak }] }],
@@ -159,7 +167,7 @@ const Chatbot: React.FC = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [isMuted, isListening, playBeep, stopSpeaking, ai]);
+    }, [isMuted, isListening, playBeep, stopSpeaking, getAiClient]);
 
     const functionDeclarations: FunctionDeclaration[] = [
         {
@@ -416,7 +424,8 @@ const Chatbot: React.FC = () => {
                 break;
         }
         
-        const newState = shouldContinue 
+        // FIX: Explicitly type `newState` to prevent the ternary operator from widening the types of `step` and `fieldToChange` to `string`.
+        const newState: typeof composeState = shouldContinue 
             ? { active: true, step: nextStep, draft: updatedDraft, fieldToChange: nextFieldToChange }
             : { active: false, step: '', draft: {}, fieldToChange: '' };
         
@@ -440,6 +449,7 @@ const Chatbot: React.FC = () => {
             const languageName = SUPPORTED_LANGUAGES.find(l => l.code === state.currentLanguage)?.name || 'English';
             const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail, languageName);
             
+            const ai = getAiClient();
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: { parts: [{ text }] },
@@ -469,7 +479,7 @@ const Chatbot: React.FC = () => {
                 setChatbotStatus('IDLE');
             }
         }
-    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, ai]);
+    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, getAiClient]);
 
     const handleTextSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

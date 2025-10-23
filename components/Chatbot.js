@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { auth } from '../firebase.js';
 import { useAppContext } from '../context/AppContext.js';
@@ -23,7 +23,7 @@ const EmailPreview = ({ draft }) => (
 
 
 const Chatbot = () => {
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY }), []);
+    const aiRef = useRef(null);
     const { state, dispatch } = useAppContext();
     const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
@@ -52,6 +52,13 @@ const Chatbot = () => {
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
+
+    const getAiClient = useCallback(() => {
+        if (!aiRef.current) {
+            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        }
+        return aiRef.current;
+    }, []);
 
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
@@ -95,6 +102,7 @@ const Chatbot = () => {
         setChatbotStatus('SPEAKING');
 
         try {
+            const ai = getAiClient();
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
                 contents: [{ parts: [{ text: textToSpeak }] }],
@@ -127,7 +135,7 @@ const Chatbot = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [isMuted, isListening, playBeep, stopSpeaking, ai]);
+    }, [isMuted, isListening, playBeep, stopSpeaking, getAiClient]);
 
     const functionDeclarations = [
         {
@@ -407,6 +415,7 @@ const Chatbot = () => {
             const languageName = SUPPORTED_LANGUAGES.find(l => l.code === state.currentLanguage)?.name || 'English';
             const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail, languageName);
             
+            const ai = getAiClient();
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: { parts: [{ text }] },
@@ -436,7 +445,7 @@ const Chatbot = () => {
                 setChatbotStatus('IDLE');
             }
         }
-    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, t, ai]);
+    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, t, getAiClient]);
 
     const handleTextSubmit = async (e) => {
         e.preventDefault();

@@ -30,7 +30,7 @@ declare global {
     }
 }
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { auth, db } from '../firebase';
 import { setupNewUser } from '../services/emailService';
@@ -40,7 +40,7 @@ import { useTranslations } from '../utils/translations';
 import { decode, decodeAudioData } from '../utils/audioUtils';
 
 const Login: React.FC = () => {
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY as string }), []);
+    const aiRef = useRef<GoogleGenAI | null>(null);
     const { state } = useAppContext();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
@@ -64,6 +64,13 @@ const Login: React.FC = () => {
     const handleVoiceInputRef = useRef<(text: string) => void>(() => {});
 
     const t = useTranslations();
+
+    const getAiClient = useCallback(() => {
+        if (!aiRef.current) {
+            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+        }
+        return aiRef.current;
+    }, []);
 
     const playBeep = useCallback((freq = 880) => {
         if (!audioContextRef.current) return;
@@ -112,6 +119,7 @@ const Login: React.FC = () => {
         };
 
         try {
+            const ai = getAiClient();
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
                 contents: [{ parts: [{ text }] }],
@@ -144,7 +152,7 @@ const Login: React.FC = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [playBeep, stopSpeaking, ai]);
+    }, [playBeep, stopSpeaking, getAiClient]);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;

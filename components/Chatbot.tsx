@@ -80,7 +80,7 @@ const Chatbot: React.FC = () => {
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const currentAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
-    const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+    const transcriptEndRef = useRef<HTMLDivElement>(null);
     const spokenWelcome = useRef(false);
     
     const composeStateRef = useRef(composeState);
@@ -104,13 +104,13 @@ const Chatbot: React.FC = () => {
     const stopSpeaking = useCallback(() => {
         currentAudioSourceRef.current?.stop();
         currentAudioSourceRef.current = null;
-        // Also cancel any legacy speechSynthesis just in case
         if ('speechSynthesis' in window) {
             speechSynthesis.cancel();
         }
     }, []);
 
-    const speak = useCallback(async (text: string, onComplete?: () => void) => {
+    const speak = useCallback(async (text: string | React.ReactNode, onComplete?: () => void) => {
+        const textToSpeak = typeof text === 'string' ? text : ' '; // Only speak string content
         setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
         stopSpeaking();
         
@@ -120,7 +120,7 @@ const Chatbot: React.FC = () => {
             onComplete?.();
         };
 
-        if (isMuted) {
+        if (isMuted || typeof text !== 'string') {
             handleEnd();
             return;
         }
@@ -130,7 +130,7 @@ const Chatbot: React.FC = () => {
         try {
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text }] }],
+                contents: [{ parts: [{ text: textToSpeak }] }],
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
@@ -234,7 +234,7 @@ const Chatbot: React.FC = () => {
 
     const tools = [{ functionDeclarations }];
     
-    const handleFunctionCall = useCallback(async (fc: FunctionCall): Promise<string> => {
+    const handleFunctionCall = useCallback(async (fc: FunctionCall) => {
         setChatbotStatus('PROCESSING');
         const { name, args } = fc;
         const { userProfile, selectedEmail } = state;
@@ -246,7 +246,7 @@ const Chatbot: React.FC = () => {
                 if (folder && Object.values(Folder).includes(folder)) {
                     dispatch({ type: 'SELECT_FOLDER', payload: folder });
                     const count = userProfile ? await getUnreadCount(userProfile.uid, folder) : 0;
-                    resultText = t('openingFolderUnreadCount', { folder: t(folder.toLowerCase() as any), count });
+                    resultText = t('openingFolderUnreadCount', { folder: t(folder.toLowerCase() as keyof ReturnType<typeof useTranslations>), count });
                 }
                 break;
             }
@@ -268,10 +268,10 @@ const Chatbot: React.FC = () => {
                         markEmailAsRead(userProfile.uid, emailToRead.id).catch(err => console.error("Chatbot failed to mark as read:", err));
                         dispatch({ type: 'MARK_AS_READ', payload: emailToRead.id });
                     }
-                    const bodyText = emailToRead.body.replace(/<[^>]*>?/gm, '\n'); 
+                    const bodyText = emailToRead.body.replace(/<[^>]*>?/gm, '\n');
                     const textToSpeak = `${t('readingEmailFrom', { sender: emailToRead.sender })}. ${t('subject')}: ${emailToRead.subject}. ${t('bodyStartsNow')}. ${bodyText}`;
                     speak(textToSpeak);
-                    return ''; 
+                    return '';
                 } else {
                     resultText = t('emailNotFoundAtIndex', { index });
                 }
@@ -326,8 +326,9 @@ const Chatbot: React.FC = () => {
         setChatbotStatus('PROCESSING');
         
         let updatedDraft = { ...composeStateRef.current.draft };
-        let nextStep: typeof composeState.step = composeStateRef.current.step;
-        let nextFieldToChange: typeof composeState.fieldToChange = composeStateRef.current.fieldToChange;
+        // FIX: Add explicit types to prevent TS from widening them to `string`.
+        let nextStep: 'recipient' | 'subject' | 'body' | 'confirm' | 'change_prompt' | 'change_field' | '' = composeStateRef.current.step;
+        let nextFieldToChange: 'recipient' | 'subject' | 'body' | '' = composeStateRef.current.fieldToChange;
         let shouldContinue = true;
 
         switch (composeStateRef.current.step) {
@@ -391,7 +392,7 @@ const Chatbot: React.FC = () => {
 
                 if (nextFieldToChange) {
                     nextStep = 'change_field';
-                    speak(t('composeNewValuePrompt', { field: t(nextFieldToChange as any) }));
+                    speak(t('composeNewValuePrompt', { field: t(nextFieldToChange) }));
                 } else {
                     speak(t('composeDidntUnderstandChange'));
                 }
@@ -442,7 +443,7 @@ const Chatbot: React.FC = () => {
             
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: text,
+                contents: { parts: [{ text }] },
                 config: { systemInstruction, tools }
             });
 
@@ -543,7 +544,6 @@ const Chatbot: React.FC = () => {
             audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
         }
         
-        // Speak welcome message once
         if (!spokenWelcome.current && !isMuted) {
             spokenWelcome.current = true;
             speak(t('welcomeMessage'));
@@ -559,8 +559,7 @@ const Chatbot: React.FC = () => {
         };
     }, [stopSpeaking]);
 
-
-    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const handleMouseDown = (e: React.MouseEvent<HTMLElement>) => {
         setIsDragging(true);
         setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     };
@@ -583,7 +582,7 @@ const Chatbot: React.FC = () => {
     const getStatusInfo = () => {
         switch (chatbotStatus) {
             case 'LISTENING': return { text: 'Active & Listening', icon: <MicIcon className="w-5 h-5 text-red-500 animate-pulse" /> };
-            case 'PROCESSING': return { text: 'Thinking...', icon: <div className="w-5 h-5 border-2 border-gray-400 border-t-blue-600 rounded-full animate-spin"></div> };
+            case 'PROCESSING': return { text: 'Thinking...', icon: <div className="w-5 h-5 border-2 border-gray-400 border-t-blue-600 rounded-full animate-spin" /> };
             case 'SPEAKING': return { text: 'Speaking...', icon: <SpeakerIcon className="w-5 h-5 text-blue-600" /> };
             default: return { text: 'Ready', icon: <MicIcon className="w-5 h-5 text-blue-600" /> };
         }
@@ -592,11 +591,11 @@ const Chatbot: React.FC = () => {
 
 
     return (
-        <div
-            className="fixed flex flex-col bg-white rounded-lg shadow-2xl border border-gray-200"
+        <div 
+            className="fixed flex flex-col bg-white rounded-lg shadow-2xl border border-gray-200" 
             style={{ left: position.x, top: position.y, width: '400px', height: '500px' }}
         >
-            <header
+            <header 
                 className="flex items-center justify-between p-3 bg-gray-100 rounded-t-lg border-b border-gray-200 cursor-move"
                 onMouseDown={handleMouseDown}
             >
@@ -615,7 +614,7 @@ const Chatbot: React.FC = () => {
                         {isListening ? <PauseIcon className="w-5 h-5 text-red-500" /> : <MicIcon className="w-5 h-5 text-gray-700" />}
                     </button>
                     <button onClick={() => dispatch({ type: 'TOGGLE_CHATBOT' })} className="p-1 rounded-full hover:bg-gray-200 text-gray-700 font-bold text-lg" title="Close">
-                        &times;
+                        ×
                     </button>
                 </div>
             </header>

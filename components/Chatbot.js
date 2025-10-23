@@ -78,6 +78,7 @@ const Chatbot = () => {
     }, []);
 
     const speak = useCallback(async (text, onComplete) => {
+        const textToSpeak = typeof text === 'string' ? text : ' '; // Only speak string content
         setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
         stopSpeaking();
         
@@ -87,7 +88,7 @@ const Chatbot = () => {
             onComplete?.();
         };
 
-        if (isMuted) {
+        if (isMuted || typeof text !== 'string') {
             handleEnd();
             return;
         }
@@ -97,7 +98,7 @@ const Chatbot = () => {
         try {
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text }] }],
+                contents: [{ parts: [{ text: textToSpeak }] }],
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
@@ -409,7 +410,7 @@ const Chatbot = () => {
             
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: text,
+                contents: { parts: [{ text }] },
                 config: { systemInstruction, tools }
             });
 

@@ -67,7 +67,7 @@ const Login: React.FC = () => {
 
     const getAiClient = useCallback(() => {
         if (!aiRef.current) {
-            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            aiRef.current = new GoogleGenAI({ apiKey: (window.process?.env?.API_KEY) as string });
         }
         return aiRef.current;
     }, []);

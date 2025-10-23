@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { auth, db } from '../firebase.js';
 import { setupNewUser } from '../services/emailService.js';
@@ -8,9 +8,8 @@ import { useAppContext } from '../context/AppContext.js';
 import { useTranslations } from '../utils/translations.js';
 import { decode, decodeAudioData } from '../utils/audioUtils.js';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const Login = () => {
+    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY }), []);
     const { state } = useAppContext();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
@@ -114,7 +113,7 @@ const Login = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [playBeep, stopSpeaking]);
+    }, [playBeep, stopSpeaking, ai]);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window).webkitSpeechRecognition;

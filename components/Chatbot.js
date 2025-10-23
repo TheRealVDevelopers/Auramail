@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { auth } from '../firebase.js';
 import { useAppContext } from '../context/AppContext.js';
@@ -8,8 +8,6 @@ import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } fr
 import { updateEmailFolder, getUnreadCount, sendEmail, markEmailAsRead } from '../services/emailService.js';
 import { useTranslations } from '../utils/translations.js';
 import { decode, decodeAudioData } from '../utils/audioUtils.js';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const EmailPreview = ({ draft }) => (
     React.createElement('div', { className: "border border-gray-300 rounded-md p-3 my-1 bg-white text-gray-800" },
@@ -25,6 +23,7 @@ const EmailPreview = ({ draft }) => (
 
 
 const Chatbot = () => {
+    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY }), []);
     const { state, dispatch } = useAppContext();
     const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
@@ -128,7 +127,7 @@ const Chatbot = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [isMuted, isListening, playBeep, stopSpeaking]);
+    }, [isMuted, isListening, playBeep, stopSpeaking, ai]);
 
     const functionDeclarations = [
         {
@@ -437,7 +436,7 @@ const Chatbot = () => {
                 setChatbotStatus('IDLE');
             }
         }
-    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, t]);
+    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, t, ai]);
 
     const handleTextSubmit = async (e) => {
         e.preventDefault();

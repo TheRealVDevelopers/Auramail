@@ -1,4 +1,3 @@
-
 // Add type definitions for the Web Speech API to fix TypeScript errors.
 // This is necessary because the API is not yet a W3C standard.
 interface SpeechRecognition extends EventTarget {
@@ -31,7 +30,7 @@ declare global {
     }
 }
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { auth, db } from '../firebase';
 import { setupNewUser } from '../services/emailService';
@@ -40,9 +39,8 @@ import { useAppContext } from '../context/AppContext';
 import { useTranslations } from '../utils/translations';
 import { decode, decodeAudioData } from '../utils/audioUtils';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-
 const Login: React.FC = () => {
+    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY as string }), []);
     const { state } = useAppContext();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
@@ -146,7 +144,7 @@ const Login: React.FC = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [playBeep, stopSpeaking]);
+    }, [playBeep, stopSpeaking, ai]);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;

@@ -30,7 +30,7 @@ declare global {
     }
 }
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GoogleGenAI, Type, FunctionDeclaration, FunctionCall, Modality } from '@google/genai';
 import { auth } from '../firebase';
 import { useAppContext } from '../context/AppContext';
@@ -40,8 +40,6 @@ import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } fr
 import { updateEmailFolder, getUnreadCount, sendEmail, markEmailAsRead } from '../services/emailService';
 import { useTranslations } from '../utils/translations';
 import { decode, decodeAudioData } from '../utils/audioUtils';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const EmailPreview: React.FC<{ draft: Partial<Email> }> = ({ draft }) => (
     <div className="border border-gray-300 rounded-md p-3 my-1 bg-white text-gray-800">
@@ -57,6 +55,7 @@ const EmailPreview: React.FC<{ draft: Partial<Email> }> = ({ draft }) => (
 
 
 const Chatbot: React.FC = () => {
+    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY as string }), []);
     const { state, dispatch } = useAppContext();
     const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
@@ -160,7 +159,7 @@ const Chatbot: React.FC = () => {
             console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [isMuted, isListening, playBeep, stopSpeaking]);
+    }, [isMuted, isListening, playBeep, stopSpeaking, ai]);
 
     const functionDeclarations: FunctionDeclaration[] = [
         {
@@ -470,7 +469,7 @@ const Chatbot: React.FC = () => {
                 setChatbotStatus('IDLE');
             }
         }
-    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak]);
+    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, ai]);
 
     const handleTextSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

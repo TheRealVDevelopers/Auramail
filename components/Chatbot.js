@@ -55,7 +55,7 @@ const Chatbot = () => {
 
     const getAiClient = useCallback(() => {
         if (!aiRef.current) {
-            aiRef.current = new GoogleGenAI({ apiKey: window.process?.env?.API_KEY });
+            aiRef.current = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         }
         return aiRef.current;
     }, []);

@@ -4,6 +4,7 @@ import React from 'react';
 import { useAppContext } from '../context/AppContext';
 import { Folder } from '../types';
 import { InboxIcon, SentIcon, SpamIcon, TrashIcon, DraftsIcon, MicIcon } from './icons/IconComponents';
+import { useTranslations } from '../utils/translations';
 
 const SIDEBAR_ITEMS = [
   { name: Folder.INBOX, Icon: InboxIcon },
@@ -15,6 +16,7 @@ const SIDEBAR_ITEMS = [
 
 const Sidebar: React.FC = () => {
   const { state, dispatch } = useAppContext();
+  const t = useTranslations();
 
   const handleSelectFolder = (folder: Folder) => {
     dispatch({ type: 'SELECT_FOLDER', payload: folder });
@@ -37,7 +39,7 @@ const Sidebar: React.FC = () => {
         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" />
         </svg>
-        <span>Compose</span>
+        <span>{t('compose')}</span>
       </button>
       <button
         onClick={handleToggleChatbot}
@@ -46,7 +48,7 @@ const Sidebar: React.FC = () => {
         }`}
     >
         <MicIcon className="w-5 h-5" />
-        <span>Voice Active</span>
+        <span>{t('voiceActive')}</span>
     </button>
       <ul>
         {SIDEBAR_ITEMS.map(({ name, Icon }) => (
@@ -60,7 +62,7 @@ const Sidebar: React.FC = () => {
               }`}
             >
               <Icon className="mr-3" />
-              {name}
+              {t(name.toLowerCase() as keyof ReturnType<typeof useTranslations>)}
             </button>
           </li>
         ))}

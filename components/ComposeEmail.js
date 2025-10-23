@@ -3,10 +3,12 @@ import { useAppContext } from '../context/AppContext.js';
 import { sendEmail, saveOrUpdateDraft } from '../services/emailService.js';
 import { CloseIcon } from './icons/IconComponents.js';
 import { Folder } from '../types.js';
+import { useTranslations } from '../utils/translations.js';
 
 const ComposeEmail = () => {
   const { state, dispatch } = useAppContext();
   const { composeEmail, userProfile } = state;
+  const t = useTranslations();
 
   const handleClose = async () => {
     if (userProfile && (composeEmail.recipient || composeEmail.subject || composeEmail.body)) {
@@ -40,7 +42,7 @@ const ComposeEmail = () => {
       }
 
     } else {
-        alert("Please fill in the recipient, subject, and body to send an email.");
+        alert(t('fillAllFields'));
     }
   };
 
@@ -52,7 +54,7 @@ const ComposeEmail = () => {
     React.createElement('div', { className: "fixed inset-0 bg-black/50 flex items-end justify-center z-50" },
       React.createElement('div', { className: "bg-white w-full max-w-2xl h-[70%] rounded-t-lg shadow-2xl flex flex-col" },
         React.createElement('header', { className: "flex items-center justify-between p-4 bg-gray-100 rounded-t-lg border-b border-gray-200" },
-          React.createElement('h2', { className: "text-lg font-semibold text-gray-800" }, "New Message"),
+          React.createElement('h2', { className: "text-lg font-semibold text-gray-800" }, t('newMessage')),
           React.createElement('button', { onClick: handleClose, className: "p-1 rounded-full text-gray-500 hover:bg-gray-200 hover:text-gray-800" },
             React.createElement(CloseIcon, null)
           )
@@ -62,7 +64,7 @@ const ComposeEmail = () => {
             {
               type: "email",
               name: "recipient",
-              placeholder: "To",
+              placeholder: t('to'),
               value: composeEmail.recipient || '',
               onChange: handleChange,
               className: "w-full bg-transparent p-2 border-b border-gray-300 focus:outline-none focus:border-blue-500"
@@ -72,7 +74,7 @@ const ComposeEmail = () => {
             {
               type: "text",
               name: "subject",
-              placeholder: "Subject",
+              placeholder: t('subject'),
               value: composeEmail.subject || '',
               onChange: handleChange,
               className: "w-full bg-transparent p-2 border-b border-gray-300 focus:outline-none focus:border-blue-500"
@@ -81,7 +83,7 @@ const ComposeEmail = () => {
           React.createElement('textarea',
             {
               name: "body",
-              placeholder: "Compose email...",
+              placeholder: t('composeEmail'),
               value: composeEmail.body || '',
               onChange: handleChange,
               className: "flex-1 w-full bg-transparent p-2 mt-4 resize-none focus:outline-none"
@@ -94,7 +96,7 @@ const ComposeEmail = () => {
               onClick: handleSend,
               className: "bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors"
             },
-            "Send"
+            t('send')
           )
         )
       )

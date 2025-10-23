@@ -3,6 +3,7 @@ import { auth, db } from '../firebase.js';
 import { setupNewUser } from '../services/emailService.js';
 import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents.js';
 import { useAppContext } from '../context/AppContext.js';
+import { useTranslations } from '../utils/translations.js';
 
 const Login = () => {
     const { state } = useAppContext();
@@ -17,6 +18,7 @@ const Login = () => {
     const [voiceFeedback, setVoiceFeedback] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [transcribedText, setTranscribedText] = useState('');
+    const [voices, setVoices] = useState([]);
 
     const recognitionRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -25,6 +27,22 @@ const Login = () => {
     const isRegisteringRef = useRef(isRegistering);
     useEffect(() => { isRegisteringRef.current = isRegistering; }, [isRegistering]);
     const handleVoiceInputRef = useRef(() => {});
+
+    const t = useTranslations();
+
+    useEffect(() => {
+        const loadVoices = () => {
+            const availableVoices = speechSynthesis.getVoices();
+            if (availableVoices.length > 0) {
+                setVoices(availableVoices);
+            }
+        };
+        loadVoices();
+        speechSynthesis.onvoiceschanged = loadVoices;
+        return () => {
+            speechSynthesis.onvoiceschanged = null;
+        };
+    }, []);
 
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
@@ -64,20 +82,49 @@ const Login = () => {
             onComplete?.();
             return;
         }
-        speechSynthesis.cancel(); // Prevent queueing issues
+        const handleEnd = () => {
+            playBeep();
+            onComplete?.();
+        };
+
+        speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = state.currentLanguage;
-        utterance.onend = () => {
-            playBeep();
-            onComplete?.();
-        };
+        
+        const targetLang = state.currentLanguage;
+        let bestVoice = undefined;
+
+        if (voices.length > 0) {
+            bestVoice = voices.find(v => v.lang === targetLang); // 1. Exact match
+    
+            if (!bestVoice) { // 2. Partial match
+                const langCode = targetLang.split('-')[0];
+                bestVoice = voices.find(v => v.lang.startsWith(langCode));
+            }
+        }
+
+        if (bestVoice) {
+            utterance.voice = bestVoice;
+            utterance.lang = bestVoice.lang; 
+        } else {
+            utterance.lang = targetLang;
+            if (voices.length > 0) {
+                 console.warn(`TTS voice for language '${targetLang}' not found. Using browser default.`);
+            }
+        }
+
+        utterance.onend = handleEnd;
         utterance.onerror = (e) => {
-            console.error("Speech synthesis error", e);
-            playBeep();
-            onComplete?.();
+            console.error(`TTS Error: ${e.error}. Utterance text: "${text.substring(0, 100)}..."`);
+            handleEnd();
         };
-        speechSynthesis.speak(utterance);
-    }, [state.currentLanguage, playBeep]);
+
+        try {
+            speechSynthesis.speak(utterance);
+        } catch (err) {
+            console.error("A synchronous error occurred when calling speechSynthesis.speak():", err);
+            handleEnd();
+        }
+    }, [state.currentLanguage, playBeep, voices]);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window).webkitSpeechRecognition;
@@ -255,7 +302,7 @@ const Login = () => {
             React.createElement('div', { className: "flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4" },
                 React.createElement('div', { className: "w-full max-w-sm p-8 space-y-6 bg-white rounded-xl shadow-lg text-center" },
                     React.createElement(MicIcon, { className: "w-16 h-16 text-blue-600 mx-auto animate-pulse" }),
-                    React.createElement('h2', { className: "text-2xl font-bold text-gray-800" }, "Voice Sign-In"),
+                    React.createElement('h2', { className: "text-2xl font-bold text-gray-800" }, t('voiceSignInTitle')),
                     React.createElement('p', { className: "text-lg text-gray-600 min-h-[5rem] flex items-center justify-center" }, voiceFeedback),
                     React.createElement('div', { className: "text-sm text-gray-600 bg-gray-100 rounded-lg p-3 min-h-[3.5rem] flex items-center justify-center" },
                         React.createElement('p', { className: "font-mono" }, transcribedText || (isListening ? '...' : ' '))
@@ -266,7 +313,7 @@ const Login = () => {
                                 onClick: cancelVoiceLogin,
                                 className: "w-full py-3 font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
                             },
-                            "Cancel"
+                            t('cancel')
                         )
                     )
                 )
@@ -281,8 +328,8 @@ const Login = () => {
                     React.createElement('div', { className: "inline-block p-3 bg-blue-600 rounded-2xl shadow-md" },
                         React.createElement(LogoEnvelopeIcon, { className: "w-8 h-8 text-white" })
                     ),
-                    React.createElement('h1', { className: "text-3xl font-bold text-blue-600" }, "VoxMail"),
-                    React.createElement('p', { className: "text-sm text-gray-500" }, "Voice-First Email Platform")
+                    React.createElement('h1', { className: "text-3xl font-bold text-blue-600" }, t('voxmailTitle')),
+                    React.createElement('p', { className: "text-sm text-gray-500" }, t('voxmailSubtitle'))
                 ),
                 
                 React.createElement('button', 
@@ -292,12 +339,12 @@ const Login = () => {
                         "aria-label": "Sign in or register with your voice"
                     },
                     React.createElement(MicIcon, { className: "w-5 h-5 text-gray-600" }),
-                    "Use Voice Sign-In"
+                    t('useVoiceSignIn')
                 ),
 
                 React.createElement('div', { className: "flex items-center" },
                     React.createElement('hr', { className: "flex-grow border-gray-200" }),
-                    React.createElement('span', { className: "mx-4 text-xs font-medium text-gray-400 uppercase" }, "OR CONTINUE MANUALLY"),
+                    React.createElement('span', { className: "mx-4 text-xs font-medium text-gray-400 uppercase" }, t('orContinueManually')),
                     React.createElement('hr', { className: "flex-grow border-gray-200" })
                 ),
 
@@ -307,21 +354,21 @@ const Login = () => {
                             onClick: () => { setIsRegistering(false); setError(null); },
                             className: `w-1/2 py-2 text-sm font-semibold rounded-md transition-all duration-300 ${!isRegistering ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`
                         },
-                        "Login"
+                        t('login')
                     ),
                     React.createElement('button',
                         {
                             onClick: () => { setIsRegistering(true); setError(null); },
                             className: `w-1/2 py-2 text-sm font-semibold rounded-md transition-all duration-300 ${isRegistering ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`
                         },
-                        "Register"
+                        t('register')
                     )
                 ),
 
                 React.createElement('form', { onSubmit: handleSubmit, className: "space-y-4" },
                     isRegistering && (
                          React.createElement('div', null,
-                            React.createElement('label', { htmlFor: "username", className: "text-sm font-medium text-gray-700" }, "Username"),
+                            React.createElement('label', { htmlFor: "username", className: "text-sm font-medium text-gray-700" }, t('username')),
                             React.createElement('div', { className: "relative mt-1" },
                                 React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
                                     React.createElement(UserIcon, { className: "w-5 h-5 text-gray-400" })
@@ -341,7 +388,7 @@ const Login = () => {
                         )
                     ),
                     React.createElement('div', null,
-                        React.createElement('label', { htmlFor: "email", className: "text-sm font-medium text-gray-700" }, isRegistering ? 'Email' : 'Email or Username'),
+                        React.createElement('label', { htmlFor: "email", className: "text-sm font-medium text-gray-700" }, isRegistering ? t('email') : t('emailOrUsername')),
                         React.createElement('div', { className: "relative mt-1" },
                             React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
                                 React.createElement(UserIcon, { className: "w-5 h-5 text-gray-400" })
@@ -360,7 +407,7 @@ const Login = () => {
                         )
                     ),
                     React.createElement('div', null,
-                        React.createElement('label', { htmlFor: "password", className: "text-sm font-medium text-gray-700" }, "Password"),
+                        React.createElement('label', { htmlFor: "password", className: "text-sm font-medium text-gray-700" }, t('password')),
                         React.createElement('div', { className: "relative mt-1" },
                             React.createElement('span', { className: "absolute inset-y-0 left-0 flex items-center pl-3", "aria-hidden": "true" },
                                 React.createElement(LockIcon, { className: "w-5 h-5 text-gray-400" })
@@ -384,7 +431,7 @@ const Login = () => {
                             type: "submit",
                             className: "w-full py-3 mt-4 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         },
-                        isRegistering ? 'Register' : 'Sign In'
+                        isRegistering ? t('register') : t('login')
                     )
                 )
             )

@@ -4,10 +4,12 @@ import { useAppContext } from '../context/AppContext';
 import { TrashIcon, SpamIcon } from './icons/IconComponents';
 import { updateEmailFolder, deleteEmailPermanently } from '../services/emailService';
 import { Folder } from '../types';
+import { useTranslations } from '../utils/translations';
 
 const EmailDetail: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const { selectedEmail, userProfile, currentFolder } = state;
+  const t = useTranslations();
 
   if (!selectedEmail) {
     return null; // Should be handled by parent
@@ -57,12 +59,12 @@ const EmailDetail: React.FC = () => {
         <h2 className="text-xl font-semibold truncate text-gray-800">{selectedEmail.subject}</h2>
         <div className="flex items-center space-x-2">
             {currentFolder !== Folder.SPAM && currentFolder !== Folder.TRASH && (
-              <button onClick={handleSpam} title="Mark as Spam" className="p-2 rounded-full hover:bg-gray-200 transition-colors"><SpamIcon className="w-5 h-5 text-gray-600"/></button>
+              <button onClick={handleSpam} title={t('markAsSpam')} className="p-2 rounded-full hover:bg-gray-200 transition-colors"><SpamIcon className="w-5 h-5 text-gray-600"/></button>
             )}
             {currentFolder === Folder.TRASH ? (
-              <button onClick={handleDeleteForever} title="Delete Forever" className="p-2 rounded-full hover:bg-red-200 transition-colors"><TrashIcon className="w-5 h-5 text-red-600"/></button>
+              <button onClick={handleDeleteForever} title={t('deleteForever')} className="p-2 rounded-full hover:bg-red-200 transition-colors"><TrashIcon className="w-5 h-5 text-red-600"/></button>
             ) : (
-              <button onClick={handleDelete} title="Delete Email" className="p-2 rounded-full hover:bg-gray-200 transition-colors"><TrashIcon className="w-5 h-5 text-gray-600"/></button>
+              <button onClick={handleDelete} title={t('deleteEmail')} className="p-2 rounded-full hover:bg-gray-200 transition-colors"><TrashIcon className="w-5 h-5 text-gray-600"/></button>
             )}
         </div>
       </div>

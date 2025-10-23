@@ -9,14 +9,16 @@ import { useAppContext } from './context/AppContext';
 import { EmptyMailboxIcon } from './components/icons/IconComponents';
 import Chatbot from './components/Chatbot';
 import Login from './components/Login';
+import { useTranslations } from './utils/translations';
 
 const App: React.FC = () => {
   const { state } = useAppContext();
+  const t = useTranslations();
 
   if (state.loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50">
-        <p className="text-lg text-gray-600">Loading VoxMail...</p>
+        <p className="text-lg text-gray-600">{t('loading')}</p>
       </div>
     );
   }
@@ -37,8 +39,8 @@ const App: React.FC = () => {
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center text-gray-500 p-8">
                 <EmptyMailboxIcon className="w-24 h-24 text-gray-300 mb-4" />
-                <h2 className="text-xl font-medium">No email selected</h2>
-                <p>Choose an email from the list to read it.</p>
+                <h2 className="text-xl font-medium">{t('noEmailSelected')}</h2>
+                <p>{t('chooseEmailToRead')}</p>
             </div>
           )}
         </main>

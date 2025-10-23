@@ -3,10 +3,12 @@ import { useAppContext } from '../context/AppContext';
 import { sendEmail, saveOrUpdateDraft } from '../services/emailService';
 import { CloseIcon } from './icons/IconComponents';
 import { Folder } from '../types';
+import { useTranslations } from '../utils/translations';
 
 const ComposeEmail: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const { composeEmail, userProfile } = state;
+  const t = useTranslations();
 
   const handleClose = async () => {
     if (userProfile && (composeEmail.recipient || composeEmail.subject || composeEmail.body)) {
@@ -40,7 +42,7 @@ const ComposeEmail: React.FC = () => {
       }
 
     } else {
-        alert("Please fill in the recipient, subject, and body to send an email.");
+        alert(t('fillAllFields'));
     }
   };
 
@@ -52,7 +54,7 @@ const ComposeEmail: React.FC = () => {
     <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50">
       <div className="bg-white w-full max-w-2xl h-[70%] rounded-t-lg shadow-2xl flex flex-col">
         <header className="flex items-center justify-between p-4 bg-gray-100 rounded-t-lg border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-800">New Message</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('newMessage')}</h2>
           <button onClick={handleClose} className="p-1 rounded-full text-gray-500 hover:bg-gray-200 hover:text-gray-800">
             <CloseIcon />
           </button>
@@ -61,7 +63,7 @@ const ComposeEmail: React.FC = () => {
           <input
             type="email"
             name="recipient"
-            placeholder="To"
+            placeholder={t('to')}
             value={composeEmail.recipient || ''}
             onChange={handleChange}
             className="w-full bg-transparent p-2 border-b border-gray-300 focus:outline-none focus:border-blue-500"
@@ -69,14 +71,14 @@ const ComposeEmail: React.FC = () => {
           <input
             type="text"
             name="subject"
-            placeholder="Subject"
+            placeholder={t('subject')}
             value={composeEmail.subject || ''}
             onChange={handleChange}
             className="w-full bg-transparent p-2 border-b border-gray-300 focus:outline-none focus:border-blue-500"
           />
           <textarea
             name="body"
-            placeholder="Compose email..."
+            placeholder={t('composeEmail')}
             value={composeEmail.body || ''}
             onChange={handleChange}
             className="flex-1 w-full bg-transparent p-2 mt-4 resize-none focus:outline-none"
@@ -87,7 +89,7 @@ const ComposeEmail: React.FC = () => {
             onClick={handleSend}
             className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors"
           >
-            Send
+            {t('send')}
           </button>
         </footer>
       </div>

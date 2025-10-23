@@ -3,9 +3,10 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { auth } from '../firebase.js';
 import { useAppContext } from '../context/AppContext.js';
 import { Folder } from '../types.js';
-import { INITIAL_SYSTEM_PROMPT } from '../constants.js';
+import { INITIAL_SYSTEM_PROMPT, SUPPORTED_LANGUAGES } from '../constants.js';
 import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } from './icons/IconComponents.js';
 import { updateEmailFolder, getUnreadCount, sendEmail, markEmailAsRead } from '../services/emailService.js';
+import { useTranslations } from '../utils/translations.js';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -27,12 +28,21 @@ const Chatbot = () => {
     const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-    const [transcript, setTranscript] = useState([]);
+    const t = useTranslations();
+    const [transcript, setTranscript] = useState(() => [
+        {
+            id: 'ai-welcome',
+            text: t('welcomeMessage'),
+            isUser: false,
+            timestamp: Date.now(),
+        }
+    ]);
     const [inputValue, setInputValue] = useState('');
     const [liveTranscript, setLiveTranscript] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [chatbotStatus, setChatbotStatus] = useState('IDLE');
     const [isMuted, setIsMuted] = useState(false);
+    const [voices, setVoices] = useState([]);
 
     const [composeState, setComposeState] = useState({
         active: false,
@@ -45,10 +55,25 @@ const Chatbot = () => {
     const recognitionRef = useRef(null);
     const audioContextRef = useRef(null);
     const transcriptEndRef = useRef(null);
-    const hasWelcomed = useRef(false);
+    const spokenWelcome = useRef(false);
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
+
+    useEffect(() => {
+        const loadVoices = () => {
+            const availableVoices = speechSynthesis.getVoices();
+            if (availableVoices.length > 0) {
+                setVoices(availableVoices);
+            }
+        };
+        loadVoices();
+        speechSynthesis.onvoiceschanged = loadVoices;
+
+        return () => {
+            speechSynthesis.onvoiceschanged = null;
+        };
+    }, []);
 
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
@@ -82,14 +107,42 @@ const Chatbot = () => {
         speechSynthesis.cancel(); // Always cancel previous speech
         setChatbotStatus('SPEAKING');
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = state.currentLanguage;
+        
+        const targetLang = state.currentLanguage;
+        let bestVoice = undefined;
+
+        if (voices.length > 0) {
+            bestVoice = voices.find(v => v.lang === targetLang); // 1. Exact match
+    
+            if (!bestVoice) { // 2. Partial match
+                const langCode = targetLang.split('-')[0];
+                bestVoice = voices.find(v => v.lang.startsWith(langCode));
+            }
+        }
+
+        if (bestVoice) {
+            utterance.voice = bestVoice;
+            utterance.lang = bestVoice.lang; 
+        } else {
+            utterance.lang = targetLang;
+            if (voices.length > 0) {
+                 console.warn(`TTS voice for language '${targetLang}' not found. Using browser default.`);
+            }
+        }
+
         utterance.onend = handleEnd;
         utterance.onerror = (e) => {
-            console.error("TTS Error:", e);
+            console.error(`TTS Error: ${e.error}. Utterance text: "${text.substring(0, 100)}..."`);
             handleEnd();
         };
-        speechSynthesis.speak(utterance);
-    }, [isMuted, isListening, playBeep, state.currentLanguage]);
+
+        try {
+            speechSynthesis.speak(utterance);
+        } catch (err) {
+            console.error("A synchronous error occurred when calling speechSynthesis.speak():", err);
+            handleEnd();
+        }
+    }, [isMuted, isListening, playBeep, state.currentLanguage, voices]);
 
     const functionDeclarations = [
         {
@@ -144,6 +197,21 @@ const Chatbot = () => {
             description: 'Logs the user out of the application.',
             parameters: { type: Type.OBJECT, properties: {} },
         },
+        {
+            name: 'change_language',
+            description: 'Changes the application and chatbot language.',
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    language_code: {
+                        type: Type.STRING,
+                        description: 'The language code to switch to.',
+                        enum: SUPPORTED_LANGUAGES.map(l => l.code),
+                    },
+                },
+                required: ['language_code'],
+            },
+        },
     ];
 
     const tools = [{ functionDeclarations }];
@@ -152,7 +220,7 @@ const Chatbot = () => {
         setChatbotStatus('PROCESSING');
         const { name, args } = fc;
         const { userProfile, selectedEmail } = state;
-        let resultText = "Done.";
+        let resultText = t('done');
         
         switch (name) {
             case 'open_folder': {
@@ -160,13 +228,13 @@ const Chatbot = () => {
                 if (folder && Object.values(Folder).includes(folder)) {
                     dispatch({ type: 'SELECT_FOLDER', payload: folder });
                     const count = userProfile ? await getUnreadCount(userProfile.uid, folder) : 0;
-                    resultText = `Opening ${folder}. You have ${count} unread messages.`;
+                    resultText = t('openingFolderUnreadCount', { folder: t(folder.toLowerCase()), count });
                 }
                 break;
             }
             case 'start_interactive_composition': {
                 setComposeState({ active: true, step: 'recipient', draft: {}, fieldToChange: '' });
-                speak("Of course. Who is the recipient?");
+                speak(t('composeRecipientPrompt'));
                 return ''; // Don't return text to speak, `speak` is called directly
             }
             case 'select_email': {
@@ -183,11 +251,11 @@ const Chatbot = () => {
                         dispatch({ type: 'MARK_AS_READ', payload: emailToRead.id });
                     }
                     const bodyText = emailToRead.body.replace(/<[^>]*>?/gm, '\n');
-                    const textToSpeak = `Reading email from ${emailToRead.sender}. Subject: ${emailToRead.subject}. Body starts now. ${bodyText}`;
+                    const textToSpeak = `${t('readingEmailFrom', { sender: emailToRead.sender })}. ${t('subject')}: ${emailToRead.subject}. ${t('bodyStartsNow')}. ${bodyText}`;
                     speak(textToSpeak);
                     return '';
                 } else {
-                    resultText = `Sorry, I can't find an email at position ${index}.`;
+                    resultText = t('emailNotFoundAtIndex', { index });
                 }
                 break;
             }
@@ -196,7 +264,7 @@ const Chatbot = () => {
                     speechSynthesis.cancel();
                 }
                 setChatbotStatus('IDLE');
-                resultText = "Stopped.";
+                resultText = t('stopped');
                 break;
             }
             case 'delete_selected_email': {
@@ -215,16 +283,27 @@ const Chatbot = () => {
             }
             case 'logout': {
                 auth.signOut().catch(error => console.error("Logout from chatbot failed", error));
-                resultText = "Signing you out.";
+                resultText = t('signingOut');
+                break;
+            }
+            case 'change_language': {
+                const langCode = args.language_code;
+                const supported = SUPPORTED_LANGUAGES.find(l => l.code === langCode);
+                if (supported) {
+                    dispatch({ type: 'SET_LANGUAGE', payload: langCode });
+                    resultText = t('languageSwitched', { language: supported.name });
+                } else {
+                    resultText = t('languageNotSupported', { langCode });
+                }
                 break;
             }
             default:
                 console.warn(`Unknown function call: ${name}`);
-                resultText = `Function ${name} not recognized.`;
+                resultText = t('functionNotRecognized', { name });
         }
 
         return resultText;
-    }, [dispatch, state, speak]);
+    }, [dispatch, state, speak, t]);
 
     const handleComposeInput = useCallback(async (text) => {
         setTranscript(prev => [...prev, { id: `user-compose-${Date.now()}`, text, isUser: true, timestamp: Date.now() }]);
@@ -236,16 +315,22 @@ const Chatbot = () => {
         let shouldContinue = true;
 
         switch (composeStateRef.current.step) {
-            case 'recipient':
-                const parsedRecipient = text.toLowerCase().split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
-                updatedDraft.recipient = parsedRecipient;
+            case 'recipient': {
+                let recipientValue = text.trim();
+                const lowerText = text.toLowerCase();
+                // Only parse as an email if it sounds like one, otherwise preserve original text for usernames
+                if (lowerText.includes(' at ') || lowerText.includes(' dot ')) {
+                    recipientValue = lowerText.split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
+                }
+                updatedDraft.recipient = recipientValue;
                 nextStep = 'subject';
-                speak("Got it. What's the subject?");
+                speak(t('composeGotItSubject'));
                 break;
+            }
             case 'subject':
                 updatedDraft.subject = text;
                 nextStep = 'body';
-                speak("Great. And what message would you like to send?");
+                speak(t('composeGreatBody'));
                 break;
             case 'body':
                 updatedDraft.body = text;
@@ -255,11 +340,11 @@ const Chatbot = () => {
                     text: React.createElement(EmailPreview, { draft: updatedDraft }),
                     isUser: false, timestamp: Date.now(),
                 }]);
-                speak("Here is a preview. You can say 'send', 'make a change', or 'cancel'.");
+                speak(t('composePreview'));
                 break;
             case 'confirm':
                 const lowerText = text.toLowerCase();
-                if (lowerText.includes('send')) {
+                if (lowerText.includes(t('send').toLowerCase())) {
                     if (state.userProfile) {
                         const emailToSend = { 
                             ...updatedDraft, 
@@ -274,25 +359,25 @@ const Chatbot = () => {
                         if (result.success) dispatch({ type: 'SELECT_FOLDER', payload: Folder.SENT });
                     }
                     shouldContinue = false;
-                } else if (lowerText.includes('change')) {
+                } else if (lowerText.includes(t('change').toLowerCase())) {
                     nextStep = 'change_prompt';
-                    speak("What would you like to change: the recipient, subject, or body?");
+                    speak(t('composeChangePrompt'));
                 } else { 
-                    speak("Okay, I've canceled this email.");
+                    speak(t('composeCanceled'));
                     shouldContinue = false;
                 }
                 break;
             case 'change_prompt':
                 const changeLowerText = text.toLowerCase();
-                if (changeLowerText.includes('recipient')) nextFieldToChange = 'recipient';
-                else if (changeLowerText.includes('subject')) nextFieldToChange = 'subject';
-                else if (changeLowerText.includes('body')) nextFieldToChange = 'body';
+                if (changeLowerText.includes(t('recipient').toLowerCase())) nextFieldToChange = 'recipient';
+                else if (changeLowerText.includes(t('subject').toLowerCase())) nextFieldToChange = 'subject';
+                else if (changeLowerText.includes(t('body').toLowerCase())) nextFieldToChange = 'body';
 
                 if (nextFieldToChange) {
                     nextStep = 'change_field';
-                    speak(`Okay, what should the new ${nextFieldToChange} be?`);
+                    speak(t('composeNewValuePrompt', { field: t(nextFieldToChange) }));
                 } else {
-                    speak("Sorry, I didn't understand. Please say recipient, subject, or body.");
+                    speak(t('composeDidntUnderstandChange'));
                 }
                 break;
             case 'change_field':
@@ -310,7 +395,7 @@ const Chatbot = () => {
                         text: React.createElement(EmailPreview, { draft: updatedDraft }),
                         isUser: false, timestamp: Date.now(),
                     }]);
-                    speak("I've updated the draft. Here is the new preview.");
+                    speak(t('composeUpdatedPreview'));
                 }
                 break;
         }
@@ -321,7 +406,7 @@ const Chatbot = () => {
         
         setComposeState(newState);
 
-    }, [state.userProfile, dispatch, speak]);
+    }, [state.userProfile, dispatch, speak, t]);
 
     const processTranscript = useCallback(async (text) => {
         if (!text) return;
@@ -336,7 +421,8 @@ const Chatbot = () => {
         setChatbotStatus('PROCESSING');
 
         try {
-            const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail);
+            const languageName = SUPPORTED_LANGUAGES.find(l => l.code === state.currentLanguage)?.name || 'English';
+            const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail, languageName);
             
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
@@ -367,7 +453,7 @@ const Chatbot = () => {
                 setChatbotStatus('IDLE');
             }
         }
-    }, [state.currentFolder, state.emails, state.selectedEmail, handleComposeInput, handleFunctionCall, speak]);
+    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, t]);
 
     const handleTextSubmit = async (e) => {
         e.preventDefault();
@@ -442,18 +528,60 @@ const Chatbot = () => {
             audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)();
         }
         return () => { 
+            if ('speechSynthesis' in window) {
+                speechSynthesis.cancel();
+            }
             recognitionRef.current?.stop();
             audioContextRef.current?.close().catch(console.error);
         };
     }, []);
 
     useEffect(() => {
-      if (!hasWelcomed.current) {
-        const welcomeMessage = "Welcome to your VoxMail Assistant! To get started, you can say 'Open my inbox', 'Compose a new email', or 'Check my sent folder'. What would you like to do?";
-        speak(welcomeMessage);
-        hasWelcomed.current = true;
-      }
-    }, [speak]);
+        // Speak the welcome message once voices are loaded.
+        if (voices.length > 0 && !spokenWelcome.current && !isMuted) {
+            spokenWelcome.current = true;
+            
+            const welcomeMessage = t('welcomeMessage');
+            const utterance = new SpeechSynthesisUtterance(welcomeMessage);
+            const targetLang = state.currentLanguage;
+            let bestVoice = undefined;
+
+            if (voices.length > 0) {
+                bestVoice = voices.find(v => v.lang === targetLang);
+                if (!bestVoice) {
+                    const langCode = targetLang.split('-')[0];
+                    bestVoice = voices.find(v => v.lang.startsWith(langCode));
+                }
+            }
+            if (bestVoice) {
+                utterance.voice = bestVoice;
+                utterance.lang = bestVoice.lang; 
+            } else {
+                utterance.lang = targetLang;
+            }
+
+            utterance.onend = () => {
+                setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
+                playBeep();
+            };
+            utterance.onerror = (e) => {
+                console.error(`TTS Welcome Error: ${e.error}`);
+                setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
+                playBeep();
+            };
+
+            const timer = setTimeout(() => {
+                if ('speechSynthesis' in window) {
+                    speechSynthesis.cancel();
+                    setChatbotStatus('SPEAKING');
+                    speechSynthesis.speak(utterance);
+                }
+            }, 150);
+
+            return () => clearTimeout(timer);
+        }
+    }, [voices, t, state.currentLanguage, isMuted, playBeep, isListening]);
+
 
     const handleMouseDown = (e) => {
         setIsDragging(true);
@@ -526,7 +654,7 @@ const Chatbot = () => {
                 )),
                 liveTranscript && (
                     React.createElement('div', { className: "my-2 flex justify-end" },
-                        React.createElement('div', { className: "px-4 py-2 rounded-lg max-w-xs text-sm bg-blue-300 text-white opacity-90" },
+                        React.createElement('div', { className: `px-4 py-2 rounded-lg max-w-xs text-sm bg-blue-300 text-white opacity-90` },
                             liveTranscript
                         )
                     )

@@ -1,13 +1,16 @@
 
+
 import React from 'react';
 import { useAppContext } from '../context/AppContext.js';
 import { TrashIcon, SpamIcon } from './icons/IconComponents.js';
 import { updateEmailFolder, deleteEmailPermanently } from '../services/emailService.js';
 import { Folder } from '../types.js';
+import { useTranslations } from '../utils/translations.js';
 
 const EmailDetail = () => {
   const { state, dispatch } = useAppContext();
   const { selectedEmail, userProfile, currentFolder } = state;
+  const t = useTranslations();
 
   if (!selectedEmail) {
     return null; // Should be handled by parent
@@ -57,12 +60,12 @@ const EmailDetail = () => {
         React.createElement('h2', { className: "text-xl font-semibold truncate text-gray-800" }, selectedEmail.subject),
         React.createElement('div', { className: "flex items-center space-x-2" },
             currentFolder !== Folder.SPAM && currentFolder !== Folder.TRASH && (
-              React.createElement('button', { onClick: handleSpam, title: "Mark as Spam", className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(SpamIcon, { className: "w-5 h-5 text-gray-600" }))
+              React.createElement('button', { onClick: handleSpam, title: t('markAsSpam'), className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(SpamIcon, { className: "w-5 h-5 text-gray-600" }))
             ),
             currentFolder === Folder.TRASH ? (
-              React.createElement('button', { onClick: handleDeleteForever, title: "Delete Forever", className: "p-2 rounded-full hover:bg-red-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-red-600" }))
+              React.createElement('button', { onClick: handleDeleteForever, title: t('deleteForever'), className: "p-2 rounded-full hover:bg-red-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-red-600" }))
             ) : (
-              React.createElement('button', { onClick: handleDelete, title: "Delete Email", className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-gray-600" }))
+              React.createElement('button', { onClick: handleDelete, title: t('deleteEmail'), className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-gray-600" }))
             )
         )
       ),

@@ -3,9 +3,11 @@ import { useAppContext } from '../context/AppContext';
 import { EnvelopeIcon, SettingsIcon } from './icons/IconComponents';
 import { auth } from '../firebase';
 import { SUPPORTED_LANGUAGES } from '../constants';
+import { useTranslations } from '../utils/translations';
 
 const Header: React.FC = () => {
   const { state, dispatch } = useAppContext();
+  const t = useTranslations();
 
   const handleLogout = () => {
       // Fix: Use v8 `auth.signOut()` method
@@ -28,13 +30,13 @@ const Header: React.FC = () => {
             value={state.currentLanguage}
             onChange={handleLanguageChange}
             className="text-sm bg-gray-50 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 py-1.5 px-2"
-            aria-label="Select language"
+            aria-label={t('selectLanguage')}
         >
             {SUPPORTED_LANGUAGES.map(lang => (
                 <option key={lang.code} value={lang.code}>{lang.name}</option>
             ))}
         </select>
-        <button className="p-2 rounded-full hover:bg-gray-100 transition-colors" title="Settings (coming soon)">
+        <button className="p-2 rounded-full hover:bg-gray-100 transition-colors" title={t('settings')}>
             <SettingsIcon className="w-6 h-6 text-gray-600" />
         </button>
         <span className="font-semibold text-gray-700">{state.userProfile?.name || state.userProfile?.email}</span>
@@ -42,7 +44,7 @@ const Header: React.FC = () => {
             onClick={handleLogout}
             className="text-sm font-semibold text-gray-600 hover:text-blue-600 transition-colors"
         >
-            Logout
+            {t('logout')}
         </button>
       </div>
     </header>

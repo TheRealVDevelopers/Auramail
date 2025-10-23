@@ -2,6 +2,7 @@ import React from 'react';
 import { useAppContext } from '../context/AppContext.js';
 import { Folder } from '../types.js';
 import { InboxIcon, SentIcon, SpamIcon, TrashIcon, DraftsIcon, MicIcon } from './icons/IconComponents.js';
+import { useTranslations } from '../utils/translations.js';
 
 const SIDEBAR_ITEMS = [
   { name: Folder.INBOX, Icon: InboxIcon },
@@ -13,6 +14,7 @@ const SIDEBAR_ITEMS = [
 
 const Sidebar = () => {
   const { state, dispatch } = useAppContext();
+  const t = useTranslations();
 
   const handleSelectFolder = (folder) => {
     dispatch({ type: 'SELECT_FOLDER', payload: folder });
@@ -36,7 +38,7 @@ const Sidebar = () => {
         React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", className: "h-5 w-5", viewBox: "0 0 20 20", fill: "currentColor" },
           React.createElement('path', { d: "M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" })
         ),
-        React.createElement('span', null, "Compose")
+        React.createElement('span', null, t('compose'))
       ),
       React.createElement('button',
         {
@@ -46,7 +48,7 @@ const Sidebar = () => {
           }`
         },
         React.createElement(MicIcon, { className: "w-5 h-5" }),
-        React.createElement('span', null, "Voice Active")
+        React.createElement('span', null, t('voiceActive'))
       ),
       React.createElement('ul', null,
         SIDEBAR_ITEMS.map(({ name, Icon }) => (
@@ -61,7 +63,7 @@ const Sidebar = () => {
                 }`
               },
               React.createElement(Icon, { className: "mr-3" }),
-              name
+              t(name.toLowerCase())
             )
           )
         ))

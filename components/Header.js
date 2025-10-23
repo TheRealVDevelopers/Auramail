@@ -3,9 +3,11 @@ import { useAppContext } from '../context/AppContext.js';
 import { EnvelopeIcon, SettingsIcon } from './icons/IconComponents.js';
 import { auth } from '../firebase.js';
 import { SUPPORTED_LANGUAGES } from '../constants.js';
+import { useTranslations } from '../utils/translations.js';
 
 const Header = () => {
   const { state, dispatch } = useAppContext();
+  const t = useTranslations();
 
   const handleLogout = () => {
       // Fix: Use v8 `auth.signOut()` method
@@ -29,13 +31,13 @@ const Header = () => {
                 value: state.currentLanguage,
                 onChange: handleLanguageChange,
                 className: "text-sm bg-gray-50 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 py-1.5 px-2",
-                "aria-label": "Select language"
+                "aria-label": t('selectLanguage')
             },
             SUPPORTED_LANGUAGES.map(lang => (
                 React.createElement('option', { key: lang.code, value: lang.code }, lang.name)
             ))
         ),
-        React.createElement('button', { className: "p-2 rounded-full hover:bg-gray-100 transition-colors", title: "Settings (coming soon)" },
+        React.createElement('button', { className: "p-2 rounded-full hover:bg-gray-100 transition-colors", title: t('settings') },
             React.createElement(SettingsIcon, { className: "w-6 h-6 text-gray-600" })
         ),
         React.createElement('span', { className: "font-semibold text-gray-700" }, state.userProfile?.name || state.userProfile?.email),
@@ -44,7 +46,7 @@ const Header = () => {
                 onClick: handleLogout,
                 className: "text-sm font-semibold text-gray-600 hover:text-blue-600 transition-colors"
             },
-            "Logout"
+            t('logout')
         )
       )
     )

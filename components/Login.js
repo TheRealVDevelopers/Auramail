@@ -1,9 +1,14 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { GoogleGenAI, Modality } from '@google/genai';
 import { auth, db } from '../firebase.js';
 import { setupNewUser } from '../services/emailService.js';
 import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents.js';
 import { useAppContext } from '../context/AppContext.js';
 import { useTranslations } from '../utils/translations.js';
+import { decode, decodeAudioData } from '../utils/audioUtils.js';
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const Login = () => {
     const { state } = useAppContext();
@@ -18,10 +23,10 @@ const Login = () => {
     const [voiceFeedback, setVoiceFeedback] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [transcribedText, setTranscribedText] = useState('');
-    const [voices, setVoices] = useState([]);
 
     const recognitionRef = useRef(null);
     const audioContextRef = useRef(null);
+    const currentAudioSourceRef = useRef(null);
     const voiceStepRef = useRef(voiceStep);
     useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
     const isRegisteringRef = useRef(isRegistering);
@@ -30,28 +35,14 @@ const Login = () => {
 
     const t = useTranslations();
 
-    useEffect(() => {
-        const loadVoices = () => {
-            const availableVoices = speechSynthesis.getVoices();
-            if (availableVoices.length > 0) {
-                setVoices(availableVoices);
-            }
-        };
-        loadVoices();
-        speechSynthesis.onvoiceschanged = loadVoices;
-        return () => {
-            speechSynthesis.onvoiceschanged = null;
-        };
-    }, []);
-
-    const playBeep = useCallback(() => {
+    const playBeep = useCallback((freq = 880) => {
         if (!audioContextRef.current) return;
         const context = audioContextRef.current;
         const oscillator = context.createOscillator();
         const gain = context.createGain();
         oscillator.connect(gain);
         gain.connect(context.destination);
-        oscillator.frequency.value = 880;
+        oscillator.frequency.value = freq;
         gain.gain.setValueAtTime(0, context.currentTime);
         gain.gain.linearRampToValueAtTime(0.3, context.currentTime + 0.05);
         gain.gain.linearRampToValueAtTime(0, context.currentTime + 0.15);
@@ -64,8 +55,14 @@ const Login = () => {
         recognitionRef.current?.stop();
     }, []);
 
+    const stopSpeaking = useCallback(() => {
+        currentAudioSourceRef.current?.stop();
+        currentAudioSourceRef.current = null;
+    }, []);
+
     const cancelVoiceLogin = useCallback(() => {
         stopListening();
+        stopSpeaking();
         setIsVoiceLoginActive(false);
         setVoiceStep('idle');
         setVoiceFeedback('');
@@ -74,57 +71,50 @@ const Login = () => {
         setPassword('');
         setError(null);
         setTranscribedText('');
-    }, [stopListening]);
+    }, [stopListening, stopSpeaking]);
 
-    const speak = useCallback((text, onComplete) => {
-        if (!('speechSynthesis' in window)) {
-            console.error("Browser does not support speech synthesis.");
-            onComplete?.();
-            return;
-        }
+    const speak = useCallback(async (text, onComplete) => {
+        stopSpeaking();
+
         const handleEnd = () => {
             playBeep();
             onComplete?.();
         };
 
-        speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        
-        const targetLang = state.currentLanguage;
-        let bestVoice = undefined;
-
-        if (voices.length > 0) {
-            bestVoice = voices.find(v => v.lang === targetLang); // 1. Exact match
-    
-            if (!bestVoice) { // 2. Partial match
-                const langCode = targetLang.split('-')[0];
-                bestVoice = voices.find(v => v.lang.startsWith(langCode));
-            }
-        }
-
-        if (bestVoice) {
-            utterance.voice = bestVoice;
-            utterance.lang = bestVoice.lang; 
-        } else {
-            utterance.lang = targetLang;
-            if (voices.length > 0) {
-                 console.warn(`TTS voice for language '${targetLang}' not found. Using browser default.`);
-            }
-        }
-
-        utterance.onend = handleEnd;
-        utterance.onerror = (e) => {
-            console.error(`TTS Error: ${e.error}. Utterance text: "${text.substring(0, 100)}..."`);
-            handleEnd();
-        };
-
         try {
-            speechSynthesis.speak(utterance);
-        } catch (err) {
-            console.error("A synchronous error occurred when calling speechSynthesis.speak():", err);
+            const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash-preview-tts",
+                contents: [{ parts: [{ text }] }],
+                config: {
+                    responseModalities: [Modality.AUDIO],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+                },
+            });
+
+            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+            if (base64Audio && audioContextRef.current) {
+                const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
+                const source = audioContextRef.current.createBufferSource();
+                currentAudioSourceRef.current = source;
+                source.buffer = audioBuffer;
+                source.connect(audioContextRef.current.destination);
+                source.onended = () => {
+                    if (currentAudioSourceRef.current === source) {
+                        currentAudioSourceRef.current = null;
+                        handleEnd();
+                    }
+                };
+                source.start();
+            } else {
+                console.error("Could not generate audio from API.");
+                handleEnd();
+            }
+        } catch (error) {
+            console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [state.currentLanguage, playBeep, voices]);
+    }, [playBeep, stopSpeaking]);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window).webkitSpeechRecognition;
@@ -280,7 +270,7 @@ const Login = () => {
 
     const handleVoiceLoginStart = () => {
         setIsVoiceLoginActive(true);
-        audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)();
+        audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)({ sampleRate: 24000 });
         setVoiceStep('action');
         const feedback = 'Welcome! Would you like to log in or register?';
         setVoiceFeedback(feedback);
@@ -290,12 +280,10 @@ const Login = () => {
     useEffect(() => {
         return () => { 
             stopListening();
-            if ('speechSynthesis' in window) {
-                speechSynthesis.cancel();
-            }
+            stopSpeaking();
             audioContextRef.current?.close().catch(console.error);
          };
-    }, [stopListening]);
+    }, [stopListening, stopSpeaking]);
     
     if (isVoiceLoginActive) {
         return (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { auth } from '../firebase.js';
 import { useAppContext } from '../context/AppContext.js';
 import { Folder } from '../types.js';
@@ -7,6 +7,7 @@ import { INITIAL_SYSTEM_PROMPT, SUPPORTED_LANGUAGES } from '../constants.js';
 import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } from './icons/IconComponents.js';
 import { updateEmailFolder, getUnreadCount, sendEmail, markEmailAsRead } from '../services/emailService.js';
 import { useTranslations } from '../utils/translations.js';
+import { decode, decodeAudioData } from '../utils/audioUtils.js';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -29,21 +30,13 @@ const Chatbot = () => {
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const t = useTranslations();
-    const [transcript, setTranscript] = useState(() => [
-        {
-            id: 'ai-welcome',
-            text: t('welcomeMessage'),
-            isUser: false,
-            timestamp: Date.now(),
-        }
-    ]);
+    const [transcript, setTranscript] = useState([]);
     const [inputValue, setInputValue] = useState('');
     const [liveTranscript, setLiveTranscript] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [chatbotStatus, setChatbotStatus] = useState('IDLE');
     const [isMuted, setIsMuted] = useState(false);
-    const [voices, setVoices] = useState([]);
-
+    
     const [composeState, setComposeState] = useState({
         active: false,
         step: '',
@@ -54,26 +47,12 @@ const Chatbot = () => {
     // Refs for async operations and cleanup
     const recognitionRef = useRef(null);
     const audioContextRef = useRef(null);
+    const currentAudioSourceRef = useRef(null);
     const transcriptEndRef = useRef(null);
     const spokenWelcome = useRef(false);
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
-
-    useEffect(() => {
-        const loadVoices = () => {
-            const availableVoices = speechSynthesis.getVoices();
-            if (availableVoices.length > 0) {
-                setVoices(availableVoices);
-            }
-        };
-        loadVoices();
-        speechSynthesis.onvoiceschanged = loadVoices;
-
-        return () => {
-            speechSynthesis.onvoiceschanged = null;
-        };
-    }, []);
 
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
@@ -90,8 +69,17 @@ const Chatbot = () => {
         oscillator.stop(context.currentTime + 0.2);
     }, []);
 
+    const stopSpeaking = useCallback(() => {
+        currentAudioSourceRef.current?.stop();
+        currentAudioSourceRef.current = null;
+        if ('speechSynthesis' in window) {
+            speechSynthesis.cancel();
+        }
+    }, []);
+
     const speak = useCallback(async (text, onComplete) => {
         setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
+        stopSpeaking();
         
         const handleEnd = () => {
             setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
@@ -99,50 +87,47 @@ const Chatbot = () => {
             onComplete?.();
         };
 
-        if (isMuted || !('speechSynthesis' in window)) {
+        if (isMuted) {
             handleEnd();
             return;
         }
-        
-        speechSynthesis.cancel(); // Always cancel previous speech
+
         setChatbotStatus('SPEAKING');
-        const utterance = new SpeechSynthesisUtterance(text);
-        
-        const targetLang = state.currentLanguage;
-        let bestVoice = undefined;
-
-        if (voices.length > 0) {
-            bestVoice = voices.find(v => v.lang === targetLang); // 1. Exact match
-    
-            if (!bestVoice) { // 2. Partial match
-                const langCode = targetLang.split('-')[0];
-                bestVoice = voices.find(v => v.lang.startsWith(langCode));
-            }
-        }
-
-        if (bestVoice) {
-            utterance.voice = bestVoice;
-            utterance.lang = bestVoice.lang; 
-        } else {
-            utterance.lang = targetLang;
-            if (voices.length > 0) {
-                 console.warn(`TTS voice for language '${targetLang}' not found. Using browser default.`);
-            }
-        }
-
-        utterance.onend = handleEnd;
-        utterance.onerror = (e) => {
-            console.error(`TTS Error: ${e.error}. Utterance text: "${text.substring(0, 100)}..."`);
-            handleEnd();
-        };
 
         try {
-            speechSynthesis.speak(utterance);
-        } catch (err) {
-            console.error("A synchronous error occurred when calling speechSynthesis.speak():", err);
+            const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash-preview-tts",
+                contents: [{ parts: [{ text }] }],
+                config: {
+                    responseModalities: [Modality.AUDIO],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+                },
+            });
+
+            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+            if (base64Audio && audioContextRef.current) {
+                const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
+                const source = audioContextRef.current.createBufferSource();
+                currentAudioSourceRef.current = source;
+                source.buffer = audioBuffer;
+                source.connect(audioContextRef.current.destination);
+                source.onended = () => {
+                    if (currentAudioSourceRef.current === source) {
+                        currentAudioSourceRef.current = null;
+                        handleEnd();
+                    }
+                };
+                source.start();
+            } else {
+                console.error("Could not generate audio from API.");
+                handleEnd();
+            }
+        } catch (error) {
+            console.error("Gemini TTS API error:", error);
             handleEnd();
         }
-    }, [isMuted, isListening, playBeep, state.currentLanguage, voices]);
+    }, [isMuted, isListening, playBeep, stopSpeaking]);
 
     const functionDeclarations = [
         {
@@ -260,9 +245,7 @@ const Chatbot = () => {
                 break;
             }
             case 'stop_reading': {
-                if ('speechSynthesis' in window) {
-                    speechSynthesis.cancel();
-                }
+                stopSpeaking();
                 setChatbotStatus('IDLE');
                 resultText = t('stopped');
                 break;
@@ -303,7 +286,7 @@ const Chatbot = () => {
         }
 
         return resultText;
-    }, [dispatch, state, speak, t]);
+    }, [dispatch, state, speak, t, stopSpeaking]);
 
     const handleComposeInput = useCallback(async (text) => {
         setTranscript(prev => [...prev, { id: `user-compose-${Date.now()}`, text, isUser: true, timestamp: Date.now() }]);
@@ -523,65 +506,24 @@ const Chatbot = () => {
     }, [transcript, liveTranscript]);
     
     useEffect(() => {
-        // Init audio context on first open for beeps
         if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)();
+            audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)({ sampleRate: 24000 });
         }
+        
+        if (!spokenWelcome.current && !isMuted) {
+            spokenWelcome.current = true;
+            speak(t('welcomeMessage'));
+        }
+
+    }, [isMuted, speak, t]);
+
+    useEffect(() => {
         return () => { 
-            if ('speechSynthesis' in window) {
-                speechSynthesis.cancel();
-            }
+            stopSpeaking();
             recognitionRef.current?.stop();
             audioContextRef.current?.close().catch(console.error);
         };
-    }, []);
-
-    useEffect(() => {
-        // Speak the welcome message once voices are loaded.
-        if (voices.length > 0 && !spokenWelcome.current && !isMuted) {
-            spokenWelcome.current = true;
-            
-            const welcomeMessage = t('welcomeMessage');
-            const utterance = new SpeechSynthesisUtterance(welcomeMessage);
-            const targetLang = state.currentLanguage;
-            let bestVoice = undefined;
-
-            if (voices.length > 0) {
-                bestVoice = voices.find(v => v.lang === targetLang);
-                if (!bestVoice) {
-                    const langCode = targetLang.split('-')[0];
-                    bestVoice = voices.find(v => v.lang.startsWith(langCode));
-                }
-            }
-            if (bestVoice) {
-                utterance.voice = bestVoice;
-                utterance.lang = bestVoice.lang; 
-            } else {
-                utterance.lang = targetLang;
-            }
-
-            utterance.onend = () => {
-                setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
-                playBeep();
-            };
-            utterance.onerror = (e) => {
-                console.error(`TTS Welcome Error: ${e.error}`);
-                setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
-                playBeep();
-            };
-
-            const timer = setTimeout(() => {
-                if ('speechSynthesis' in window) {
-                    speechSynthesis.cancel();
-                    setChatbotStatus('SPEAKING');
-                    speechSynthesis.speak(utterance);
-                }
-            }, 150);
-
-            return () => clearTimeout(timer);
-        }
-    }, [voices, t, state.currentLanguage, isMuted, playBeep, isListening]);
-
+    }, [stopSpeaking]);
 
     const handleMouseDown = (e) => {
         setIsDragging(true);

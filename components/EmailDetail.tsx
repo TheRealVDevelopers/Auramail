@@ -2,12 +2,12 @@
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
 import { TrashIcon, SpamIcon } from './icons/IconComponents';
-import { updateEmailFolder } from '../services/emailService';
+import { updateEmailFolder, deleteEmailPermanently } from '../services/emailService';
 import { Folder } from '../types';
 
 const EmailDetail: React.FC = () => {
   const { state, dispatch } = useAppContext();
-  const { selectedEmail, userProfile } = state;
+  const { selectedEmail, userProfile, currentFolder } = state;
 
   if (!selectedEmail) {
     return null; // Should be handled by parent
@@ -20,6 +20,24 @@ const EmailDetail: React.FC = () => {
         dispatch({ type: 'DELETE_EMAIL', payload: selectedEmail.id });
     } catch (error) {
         console.error("Failed to delete email:", error);
+    }
+  };
+
+  const handleDeleteForever = async () => {
+    if (!userProfile || !selectedEmail) return;
+    if (window.confirm("Are you sure you want to permanently delete this email? This action cannot be undone.")) {
+        const emailIdToDelete = selectedEmail.id;
+        try {
+            // First, attempt to delete from the backend.
+            await deleteEmailPermanently(userProfile.uid, emailIdToDelete);
+            
+            // If successful, then update the UI.
+            dispatch({ type: 'DELETE_EMAIL_FOREVER', payload: emailIdToDelete });
+        } catch (error) {
+            console.error("Failed to permanently delete email:", error);
+            // If the backend call fails, inform the user and do not change the UI.
+            alert("Could not permanently delete the email. Please check your connection and try again.");
+        }
     }
   };
   
@@ -38,8 +56,14 @@ const EmailDetail: React.FC = () => {
       <div className="p-4 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-xl font-semibold truncate text-gray-800">{selectedEmail.subject}</h2>
         <div className="flex items-center space-x-2">
-            <button onClick={handleSpam} title="Mark as Spam" className="p-2 rounded-full hover:bg-gray-200 transition-colors"><SpamIcon className="w-5 h-5 text-gray-600"/></button>
-            <button onClick={handleDelete} title="Delete Email" className="p-2 rounded-full hover:bg-gray-200 transition-colors"><TrashIcon className="w-5 h-5 text-gray-600"/></button>
+            {currentFolder !== Folder.SPAM && currentFolder !== Folder.TRASH && (
+              <button onClick={handleSpam} title="Mark as Spam" className="p-2 rounded-full hover:bg-gray-200 transition-colors"><SpamIcon className="w-5 h-5 text-gray-600"/></button>
+            )}
+            {currentFolder === Folder.TRASH ? (
+              <button onClick={handleDeleteForever} title="Delete Forever" className="p-2 rounded-full hover:bg-red-200 transition-colors"><TrashIcon className="w-5 h-5 text-red-600"/></button>
+            ) : (
+              <button onClick={handleDelete} title="Delete Email" className="p-2 rounded-full hover:bg-gray-200 transition-colors"><TrashIcon className="w-5 h-5 text-gray-600"/></button>
+            )}
         </div>
       </div>
       <div className="p-6">

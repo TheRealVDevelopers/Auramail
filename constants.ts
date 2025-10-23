@@ -3,11 +3,7 @@ import { Folder, Email, Language } from './types';
 
 export const SUPPORTED_LANGUAGES: Language[] = [
     { name: 'English (US)', code: 'en-US' },
-    { name: 'English (India)', code: 'en-IN' },
     { name: 'Hindi', code: 'hi-IN' },
-    { name: 'Malayalam', code: 'ml-IN' },
-    { name: 'Tamil', code: 'ta-IN' },
-    { name: 'Telugu', code: 'te-IN' },
     { name: 'Kannada', code: 'kn-IN' },
 ];
 

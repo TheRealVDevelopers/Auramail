@@ -146,7 +146,7 @@ export const getEmails = async (userId: string, folder: Folder): Promise<Email[]
     return emails;
 };
 
-export const sendEmail = async (senderUid: string, email: Partial<Email>): Promise<{ success: boolean; message: string; }> => {
+export const sendEmail = async (senderUid: string, email: Partial<Email>, draftId?: string): Promise<{ success: boolean; message: string; }> => {
     // Step 1: Always save to the sender's "Sent" folder first.
     try {
         const sentEmailData = {
@@ -159,6 +159,10 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
         const senderEmailsCol = getEmailsCollection(senderUid);
         // Fix: Use v8 `.add()` method
         await senderEmailsCol.add(sentEmailData);
+        // After successfully sending, delete the original draft if one existed.
+        if (draftId) {
+            await deleteEmailPermanently(senderUid, draftId);
+        }
     } catch (error) {
         console.error("Critical Error: Failed to save email to Sent folder.", error);
         return { success: false, message: "Could not save the email to your Sent folder. Please check your connection or permissions." };
@@ -203,6 +207,37 @@ export const sendEmail = async (senderUid: string, email: Partial<Email>): Promi
     }
 };
 
+export const saveOrUpdateDraft = async (userId: string, draft: Partial<Email>): Promise<string> => {
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userData = userDoc.data();
+    const draftsCol = getEmailsCollection(userId);
+
+    const draftData = {
+        sender: userData?.displayName || userData?.email || 'Me',
+        senderEmail: userData?.email || '',
+        recipient: draft.recipient || '',
+        subject: draft.subject || '',
+        body: draft.body || '',
+        // Fix: Corrected typo from DRAFRAFTS to DRAFTS.
+        folder: Folder.DRAFTS,
+        read: true,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (draft.id) {
+        const docRef = draftsCol.doc(draft.id);
+        await docRef.set(draftData, { merge: true });
+        return draft.id;
+    } else {
+        const docRef = await draftsCol.add(draftData);
+        return docRef.id;
+    }
+};
+
+export const deleteEmailPermanently = async (userId: string, emailId: string): Promise<void> => {
+    const emailDoc = getEmailsCollection(userId).doc(emailId);
+    await emailDoc.delete();
+};
 
 export const updateEmailFolder = async (userId: string, emailId: string, folder: Folder): Promise<void> => {
     // Fix: Use v8 method chaining to get doc ref and `.update()` method

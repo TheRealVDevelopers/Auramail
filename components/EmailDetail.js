@@ -1,12 +1,13 @@
+
 import React from 'react';
 import { useAppContext } from '../context/AppContext.js';
 import { TrashIcon, SpamIcon } from './icons/IconComponents.js';
-import { updateEmailFolder } from '../services/emailService.js';
+import { updateEmailFolder, deleteEmailPermanently } from '../services/emailService.js';
 import { Folder } from '../types.js';
 
 const EmailDetail = () => {
   const { state, dispatch } = useAppContext();
-  const { selectedEmail, userProfile } = state;
+  const { selectedEmail, userProfile, currentFolder } = state;
 
   if (!selectedEmail) {
     return null; // Should be handled by parent
@@ -19,6 +20,24 @@ const EmailDetail = () => {
         dispatch({ type: 'DELETE_EMAIL', payload: selectedEmail.id });
     } catch (error) {
         console.error("Failed to delete email:", error);
+    }
+  };
+
+  const handleDeleteForever = async () => {
+    if (!userProfile || !selectedEmail) return;
+    if (window.confirm("Are you sure you want to permanently delete this email? This action cannot be undone.")) {
+        const emailIdToDelete = selectedEmail.id;
+        try {
+            // First, attempt to delete from the backend.
+            await deleteEmailPermanently(userProfile.uid, emailIdToDelete);
+            
+            // If successful, then update the UI.
+            dispatch({ type: 'DELETE_EMAIL_FOREVER', payload: emailIdToDelete });
+        } catch (error) {
+            console.error("Failed to permanently delete email:", error);
+            // If the backend call fails, inform the user and do not change the UI.
+            alert("Could not permanently delete the email. Please check your connection and try again.");
+        }
     }
   };
   
@@ -37,8 +56,14 @@ const EmailDetail = () => {
       React.createElement('div', { className: "p-4 border-b border-gray-200 flex justify-between items-center" },
         React.createElement('h2', { className: "text-xl font-semibold truncate text-gray-800" }, selectedEmail.subject),
         React.createElement('div', { className: "flex items-center space-x-2" },
-            React.createElement('button', { onClick: handleSpam, title: "Mark as Spam", className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(SpamIcon, { className: "w-5 h-5 text-gray-600" })),
-            React.createElement('button', { onClick: handleDelete, title: "Delete Email", className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-gray-600" }))
+            currentFolder !== Folder.SPAM && currentFolder !== Folder.TRASH && (
+              React.createElement('button', { onClick: handleSpam, title: "Mark as Spam", className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(SpamIcon, { className: "w-5 h-5 text-gray-600" }))
+            ),
+            currentFolder === Folder.TRASH ? (
+              React.createElement('button', { onClick: handleDeleteForever, title: "Delete Forever", className: "p-2 rounded-full hover:bg-red-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-red-600" }))
+            ) : (
+              React.createElement('button', { onClick: handleDelete, title: "Delete Email", className: "p-2 rounded-full hover:bg-gray-200 transition-colors" }, React.createElement(TrashIcon, { className: "w-5 h-5 text-gray-600" }))
+            )
         )
       ),
       React.createElement('div', { className: "p-6" },

@@ -6,7 +6,7 @@ import { InboxIcon, SentIcon, SpamIcon, TrashIcon, DraftsIcon, MicIcon } from '.
 const SIDEBAR_ITEMS = [
   { name: Folder.INBOX, Icon: InboxIcon },
   { name: Folder.SENT, Icon: SentIcon },
-  // { name: Folder.DRAFTS, Icon: DraftsIcon }, // DRAFTS is not a folder type yet
+  { name: Folder.DRAFTS, Icon: DraftsIcon },
   { name: Folder.SPAM, Icon: SpamIcon },
   { name: Folder.TRASH, Icon: TrashIcon },
 ];
@@ -64,18 +64,7 @@ const Sidebar = () => {
               name
             )
           )
-        )),
-        // Adding Drafts manually as it's not in the enum
-        React.createElement('li', null,
-            React.createElement('button',
-                {
-                    className: "w-full flex items-center p-2.5 my-1 rounded-lg text-left transition-colors duration-200 text-sm text-gray-400 cursor-not-allowed",
-                    disabled: true
-                },
-                React.createElement(DraftsIcon, { className: "mr-3" }),
-                "Drafts"
-            )
-        )
+        ))
       )
     )
   );

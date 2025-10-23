@@ -37,7 +37,7 @@ import { useAppContext } from '../context/AppContext';
 import { Transcript, Folder, Email } from '../types';
 import { INITIAL_SYSTEM_PROMPT } from '../constants';
 import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } from './icons/IconComponents';
-import { updateEmailFolder, getUnreadCount, sendEmail } from '../services/emailService';
+import { updateEmailFolder, getUnreadCount, sendEmail, markEmailAsRead } from '../services/emailService';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
@@ -77,6 +77,7 @@ const Chatbot: React.FC = () => {
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+    const hasWelcomed = useRef(false);
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
@@ -110,6 +111,7 @@ const Chatbot: React.FC = () => {
             return;
         }
 
+        speechSynthesis.cancel(); // Always cancel previous speech
         setChatbotStatus('SPEAKING');
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = state.currentLanguage;
@@ -146,6 +148,20 @@ const Chatbot: React.FC = () => {
             }
         },
         {
+            name: 'read_email_by_index',
+            description: 'Reads the content of a specific email from the current list aloud, based on its position (e.g., 1 for the first, 2 for the second).',
+            parameters: {
+                type: Type.OBJECT,
+                properties: { index: { type: Type.NUMBER, description: 'The 1-based index of the email in the list.' } },
+                required: ['index'],
+            },
+        },
+        {
+            name: 'stop_reading',
+            description: 'Immediately stops the chatbot from speaking the current message.',
+            parameters: { type: Type.OBJECT, properties: {} },
+        },
+        {
             name: 'delete_selected_email',
             description: 'Deletes the currently selected email.',
             parameters: { type: Type.OBJECT, properties: {} },
@@ -171,7 +187,7 @@ const Chatbot: React.FC = () => {
         let resultText = "Done.";
         
         switch (name) {
-            case 'open_folder':
+            case 'open_folder': {
                 const folder = args.folder_name as Folder;
                 if (folder && Object.values(Folder).includes(folder)) {
                     dispatch({ type: 'SELECT_FOLDER', payload: folder });
@@ -179,30 +195,61 @@ const Chatbot: React.FC = () => {
                     resultText = `Opening ${folder}. You have ${count} unread messages.`;
                 }
                 break;
-            case 'start_interactive_composition':
+            }
+            case 'start_interactive_composition': {
                 setComposeState({ active: true, step: 'recipient', draft: {}, fieldToChange: '' });
                 speak("Of course. Who is the recipient?");
                 return ''; // Don't return text to speak, `speak` is called directly
-            case 'select_email':
+            }
+            case 'select_email': {
                 if (args.email_id) dispatch({ type: 'SELECT_EMAIL', payload: args.email_id as string });
                 break;
-            case 'delete_selected_email':
+            }
+            case 'read_email_by_index': {
+                const index = args.index as number;
+                if (index && index > 0 && state.emails.length >= index) {
+                    const emailToRead = state.emails[index - 1];
+                    dispatch({ type: 'SELECT_EMAIL', payload: emailToRead.id });
+                    if (!emailToRead.read && userProfile) {
+                        markEmailAsRead(userProfile.uid, emailToRead.id).catch(err => console.error("Chatbot failed to mark as read:", err));
+                        dispatch({ type: 'MARK_AS_READ', payload: emailToRead.id });
+                    }
+                    const bodyText = emailToRead.body.replace(/<[^>]*>?/gm, '\n'); 
+                    const textToSpeak = `Reading email from ${emailToRead.sender}. Subject: ${emailToRead.subject}. Body starts now. ${bodyText}`;
+                    speak(textToSpeak);
+                    return ''; 
+                } else {
+                    resultText = `Sorry, I can't find an email at position ${index}.`;
+                }
+                break;
+            }
+            case 'stop_reading': {
+                if ('speechSynthesis' in window) {
+                    speechSynthesis.cancel();
+                }
+                setChatbotStatus('IDLE');
+                resultText = "Stopped.";
+                break;
+            }
+            case 'delete_selected_email': {
                 if (userProfile && selectedEmail) {
                     await updateEmailFolder(userProfile.uid, selectedEmail.id, Folder.TRASH);
                     dispatch({ type: 'DELETE_EMAIL', payload: selectedEmail.id });
                 }
                 break;
-            case 'mark_selected_as_spam':
+            }
+            case 'mark_selected_as_spam': {
                 if (userProfile && selectedEmail) {
                     await updateEmailFolder(userProfile.uid, selectedEmail.id, Folder.SPAM);
                     dispatch({ type: 'MOVE_TO_SPAM', payload: selectedEmail.id });
                 }
                 break;
-            case 'logout':
-                // Fix: Use v8 `auth.signOut()` method
+            }
+            case 'logout': {
                 auth.signOut().catch(error => console.error("Logout from chatbot failed", error));
                 resultText = "Signing you out.";
                 break;
+            }
             default:
                 console.warn(`Unknown function call: ${name}`);
                 resultText = `Function ${name} not recognized.`;
@@ -432,6 +479,14 @@ const Chatbot: React.FC = () => {
         };
     }, []);
 
+    useEffect(() => {
+      if (!hasWelcomed.current) {
+        const welcomeMessage = "Welcome to your VoxMail Assistant! To get started, you can say 'Open my inbox', 'Compose a new email', or 'Check my sent folder'. What would you like to do?";
+        speak(welcomeMessage);
+        hasWelcomed.current = true;
+      }
+    }, [speak]);
+
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
         setIsDragging(true);
@@ -493,11 +548,6 @@ const Chatbot: React.FC = () => {
                 </div>
             </header>
             <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
-                 {transcript.length === 0 && !liveTranscript && (
-                    <div className="text-center text-gray-500 p-4">
-                        <p className="text-sm">Hi! I'm your voice assistant. How can I help you manage your email today?</p>
-                    </div>
-                )}
                 {transcript.map((item) => (
                     <div key={item.id} className={`my-2 flex ${item.isUser ? 'justify-end' : 'justify-start'}`}>
                         <div className={`px-4 py-2 rounded-lg max-w-xs text-sm ${item.isUser ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'}`}>

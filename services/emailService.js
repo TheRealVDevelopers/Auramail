@@ -1,7 +1,6 @@
 // Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/firestore';
-import 'firebase/compat/auth';
 import { db } from '../firebase.js';
 import { Folder } from '../types.js';
 
@@ -144,7 +143,7 @@ export const getEmails = async (userId, folder) => {
     return emails;
 };
 
-export const sendEmail = async (senderUid, email) => {
+export const sendEmail = async (senderUid, email, draftId) => {
     // Step 1: Always save to the sender's "Sent" folder first.
     try {
         const sentEmailData = {
@@ -157,6 +156,9 @@ export const sendEmail = async (senderUid, email) => {
         const senderEmailsCol = getEmailsCollection(senderUid);
         // Fix: Use v8 `.add()` method
         await senderEmailsCol.add(sentEmailData);
+        if (draftId) {
+            await deleteEmailPermanently(senderUid, draftId);
+        }
     } catch (error) {
         console.error("Critical Error: Failed to save email to Sent folder.", error);
         return { success: false, message: "Could not save the email to your Sent folder. Please check your connection or permissions." };
@@ -199,6 +201,37 @@ export const sendEmail = async (senderUid, email) => {
             message: `CRITICAL: Email delivery failed due to a database error. This usually means a database index is missing. Please OPEN THE DEVELOPER CONSOLE (F12), find the error message, and CLICK THE LINK in it to create the required index. Your email has been saved in 'Sent'.` 
         };
     }
+};
+
+export const saveOrUpdateDraft = async (userId, draft) => {
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userData = userDoc.data();
+    const draftsCol = getEmailsCollection(userId);
+
+    const draftData = {
+        sender: userData?.displayName || userData?.email || 'Me',
+        senderEmail: userData?.email || '',
+        recipient: draft.recipient || '',
+        subject: draft.subject || '',
+        body: draft.body || '',
+        folder: Folder.DRAFTS,
+        read: true,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (draft.id) {
+        const docRef = draftsCol.doc(draft.id);
+        await docRef.set(draftData, { merge: true });
+        return draft.id;
+    } else {
+        const docRef = await draftsCol.add(draftData);
+        return docRef.id;
+    }
+};
+
+export const deleteEmailPermanently = async (userId, emailId) => {
+    const emailDoc = getEmailsCollection(userId).doc(emailId);
+    await emailDoc.delete();
 };
 
 

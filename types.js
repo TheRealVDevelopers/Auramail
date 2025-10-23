@@ -3,4 +3,5 @@ export const Folder = {
   SENT: 'Sent',
   SPAM: 'Spam',
   TRASH: 'Trash',
+  DRAFTS: 'Drafts',
 };

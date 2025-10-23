@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
-import { sendEmail } from '../services/emailService';
+import { sendEmail, saveOrUpdateDraft } from '../services/emailService';
 import { CloseIcon } from './icons/IconComponents';
 import { Folder } from '../types';
 
@@ -8,7 +8,12 @@ const ComposeEmail: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const { composeEmail, userProfile } = state;
 
-  const handleClose = () => {
+  const handleClose = async () => {
+    if (userProfile && (composeEmail.recipient || composeEmail.subject || composeEmail.body)) {
+      await saveOrUpdateDraft(userProfile.uid, composeEmail);
+      // Fetching emails again to show the new draft would be ideal,
+      // but for now, it will appear when the user re-enters the folder.
+    }
     dispatch({ type: 'CLOSE_COMPOSE' });
   };
 
@@ -23,10 +28,10 @@ const ComposeEmail: React.FC = () => {
           folder: Folder.SENT,
       };
       
-      const result = await sendEmail(userProfile.uid, emailToSend);
+      const result = await sendEmail(userProfile.uid, emailToSend, composeEmail.id);
       
-      // Always close compose modal and switch to sent folder
-      dispatch({ type: 'SEND_COMPOSE' });
+      // This will close the modal and remove the draft from the list if it was one.
+      dispatch({ type: 'SEND_COMPOSE' }); 
       dispatch({ type: 'SELECT_FOLDER', payload: Folder.SENT });
 
       // If sending failed or had a warning (e.g., recipient not found), show an alert.

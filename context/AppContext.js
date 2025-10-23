@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 // Fix: Use v8 namespaced imports and types for Firebase
 // Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
-import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import { auth } from '../firebase.js';
 import { Folder } from '../types.js';
@@ -50,17 +49,27 @@ const appReducer = (state, action) => {
       };
     case 'DELETE_EMAIL':
     case 'MOVE_TO_SPAM':
-        const emailId = action.payload;
+    case 'DELETE_EMAIL_FOREVER':
+        const emailIdToDelete = action.payload;
         return {
             ...state,
-            emails: state.emails.filter(e => e.id !== emailId),
-            selectedEmail: state.selectedEmail?.id === emailId ? null : state.selectedEmail,
+            emails: state.emails.filter(e => e.id !== emailIdToDelete),
+            selectedEmail: state.selectedEmail?.id === emailIdToDelete ? null : state.selectedEmail,
         };
     case 'START_COMPOSE':
-        return { ...state, isComposeOpen: true, composeEmail: { recipient: '', subject: '', body: ''} };
+        return { 
+            ...state, 
+            isComposeOpen: true, 
+            composeEmail: action.payload || { recipient: '', subject: '', body: ''} 
+        };
     case 'UPDATE_COMPOSE':
         return { ...state, composeEmail: { ...state.composeEmail, ...action.payload } };
     case 'SEND_COMPOSE':
+        // If a draft was sent, it will have an ID. Remove it from the list.
+        const emailsAfterSend = state.composeEmail.id 
+            ? state.emails.filter(e => e.id !== state.composeEmail.id) 
+            : state.emails;
+        return { ...state, isComposeOpen: false, composeEmail: {}, emails: emailsAfterSend };
     case 'CLOSE_COMPOSE':
         return { ...state, isComposeOpen: false, composeEmail: {} };
     case 'TOGGLE_CHATBOT':

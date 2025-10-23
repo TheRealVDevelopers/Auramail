@@ -18,6 +18,7 @@ export enum Folder {
   SENT = 'Sent',
   SPAM = 'Spam',
   TRASH = 'Trash',
+  DRAFTS = 'Drafts',
 }
 
 export interface UserProfile {

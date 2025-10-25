@@ -48,7 +48,7 @@ const Chatbot = () => {
     const audioContextRef = useRef(null);
     const currentAudioSourceRef = useRef(null);
     const transcriptEndRef = useRef(null);
-    const spokenWelcome = useRef(false);
+    const welcomeSpoken = useRef(false);
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
@@ -101,6 +101,30 @@ const Chatbot = () => {
 
         setChatbotStatus('SPEAKING');
 
+        // Ensure AudioContext is initialized
+        if (!audioContextRef.current) {
+            try {
+                audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+            } catch (error) {
+                console.error("Failed to initialize AudioContext:", error);
+                // Fallback to browser speech synthesis
+                fallbackSpeak(textToSpeak, handleEnd);
+                return;
+            }
+        }
+
+        // Check if API key is available
+        if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'YOUR_API_KEY_HERE') {
+            console.warn("Gemini API key not configured, using fallback TTS");
+            fallbackSpeak(textToSpeak, handleEnd);
+            return;
+        }
+
+        // Force fallback TTS due to quota issues - comment this out when quota is restored
+        console.warn("Forcing fallback TTS due to API quota issues");
+        fallbackSpeak(textToSpeak, handleEnd);
+        return;
+
         try {
             const ai = getAiClient();
             const response = await ai.models.generateContent({
@@ -128,14 +152,46 @@ const Chatbot = () => {
                 };
                 source.start();
             } else {
-                console.error("Could not generate audio from API.");
-                handleEnd();
+                console.error("Could not generate audio from API, using fallback TTS");
+                fallbackSpeak(textToSpeak, handleEnd);
             }
         } catch (error) {
             console.error("Gemini TTS API error:", error);
-            handleEnd();
+            fallbackSpeak(textToSpeak, handleEnd);
         }
     }, [isMuted, isListening, playBeep, stopSpeaking, getAiClient]);
+
+    const fallbackSpeak = useCallback((text, onComplete) => {
+        try {
+            // Stop any current speech
+            speechSynthesis.cancel();
+            
+            // Wait a bit for cancellation to complete
+            setTimeout(() => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.volume = 1.0;
+                utterance.rate = 0.9;
+                utterance.pitch = 1.0;
+                
+                utterance.onend = () => {
+                    console.log("Fallback TTS completed");
+                    onComplete?.();
+                };
+                
+                utterance.onerror = (error) => {
+                    console.error("Speech synthesis error:", error);
+                    // Try to continue anyway
+                    onComplete?.();
+                };
+                
+                console.log("Attempting fallback TTS with text:", text);
+                speechSynthesis.speak(utterance);
+            }, 100);
+        } catch (error) {
+            console.error("Failed to use fallback TTS:", error);
+            onComplete?.();
+        }
+    }, []);
 
     const functionDeclarations = [
         {
@@ -516,15 +572,40 @@ const Chatbot = () => {
     
     useEffect(() => {
         if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)({ sampleRate: 24000 });
+            audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
         }
-        
-        if (!spokenWelcome.current && !isMuted) {
-            spokenWelcome.current = true;
-            speak(t('welcomeMessage'));
-        }
+    }, []);
 
-    }, [isMuted, speak, t]);
+    // Welcome message effect - runs once when component mounts
+    useEffect(() => {
+        if (!welcomeSpoken.current) {
+            welcomeSpoken.current = true;
+            console.log('Welcome message effect triggered, isMuted:', isMuted);
+            
+            // Show welcome message in chat but don't speak until user interaction
+            setTranscript(prev => [...prev, { 
+                id: `ai-${Date.now()}`, 
+                text: t('welcomeMessage'), 
+                isUser: false, 
+                timestamp: Date.now() 
+            }]);
+            
+            // Add a click handler to enable audio on first user interaction
+            const enableAudio = () => {
+                console.log('User interaction detected, enabling audio');
+                if (!isMuted) {
+                    speak(t('welcomeMessage'));
+                }
+                // Remove the event listener after first use
+                document.removeEventListener('click', enableAudio);
+                document.removeEventListener('keydown', enableAudio);
+            };
+            
+            // Listen for user interaction to enable audio
+            document.addEventListener('click', enableAudio);
+            document.addEventListener('keydown', enableAudio);
+        }
+    }, []); // Empty dependency array - runs only once on mount
 
     useEffect(() => {
         return () => { 
@@ -584,7 +665,11 @@ const Chatbot = () => {
                     )
                 ),
                 React.createElement('div', { className: "flex items-center space-x-2" },
-                    React.createElement('button', { onClick: () => setIsMuted(prev => !prev), className: "p-1 rounded-full hover:bg-gray-200", title: isMuted ? 'Unmute' : 'Mute' },
+                    React.createElement('button', { 
+                        onClick: () => setIsMuted(prev => !prev), 
+                        className: "p-1 rounded-full hover:bg-gray-200", 
+                        title: isMuted ? 'Unmute' : 'Mute' 
+                    },
                         isMuted ? React.createElement(SpeakerOffIcon, { className: "w-5 h-5 text-gray-700" }) : React.createElement(SpeakerIcon, { className: "w-5 h-5 text-gray-700" })
                     ),
                     React.createElement('button', { onClick: toggleListening, className: "p-1 rounded-full hover:bg-gray-200", title: isListening ? 'Stop Listening' : 'Start Listening' },

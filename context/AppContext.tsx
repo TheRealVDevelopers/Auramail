@@ -50,7 +50,7 @@ const initialState: AppState = {
   composeEmail: {},
   loading: true, // Start loading to check auth status
   error: null,
-  isChatbotOpen: false,
+  isChatbotOpen: true, // Chatbot open by default
   currentLanguage: 'en-US',
 };
 
@@ -59,7 +59,7 @@ const appReducer = (state: AppState, action: Action): AppState => {
     case 'LOGIN_SUCCESS':
       return { ...state, isAuthenticated: true, userProfile: action.payload, loading: false, error: null };
     case 'LOGOUT_SUCCESS':
-      return { ...initialState, isAuthenticated: false, userProfile: null, loading: false };
+      return { ...initialState, isAuthenticated: false, userProfile: null, loading: false, isChatbotOpen: true };
     case 'FETCH_EMAILS_START':
       return { ...state, loading: true, error: null, emails: [], selectedEmail: null };
     case 'FETCH_EMAILS_SUCCESS':

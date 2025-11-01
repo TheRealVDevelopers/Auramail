@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import EmailList from './components/EmailList';
@@ -12,8 +12,15 @@ import Login from './components/Login';
 import { useTranslations } from './utils/translations';
 
 const App: React.FC = () => {
-  const { state } = useAppContext();
+  const { state, dispatch } = useAppContext();
   const t = useTranslations();
+
+  useEffect(() => {
+    // Automatically open the chatbot when the user logs in and the app is ready.
+    if (state.isAuthenticated && !state.loading && !state.isChatbotOpen) {
+      dispatch({ type: 'TOGGLE_CHATBOT' });
+    }
+  }, [state.isAuthenticated, state.loading, state.isChatbotOpen, dispatch]);
 
   if (state.loading) {
     return (

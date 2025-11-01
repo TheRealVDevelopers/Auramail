@@ -67,7 +67,8 @@ const Login: React.FC = () => {
 
     const getAiClient = useCallback(() => {
         if (!aiRef.current) {
-            aiRef.current = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
+            // Fix: Use process.env.API_KEY as per the guidelines. This is replaced by the bundler.
+            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
         }
         return aiRef.current;
     }, []);
@@ -118,28 +119,7 @@ const Login: React.FC = () => {
             onComplete?.();
         };
 
-        // Ensure AudioContext is initialized
-        if (!audioContextRef.current) {
-            try {
-                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-            } catch (error) {
-                console.error("Failed to initialize AudioContext:", error);
-                // Fallback to browser speech synthesis
-                fallbackSpeak(text, handleEnd);
-                return;
-            }
-        }
-
-        // Check if API key is available
-        if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'YOUR_API_KEY_HERE') {
-            console.warn("Gemini API key not configured, using fallback TTS");
-            setVoiceFeedback("Using browser speech synthesis...");
-            fallbackSpeak(text, handleEnd);
-            return;
-        }
-
         try {
-            setVoiceFeedback("Generating speech...");
             const ai = getAiClient();
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash-preview-tts",
@@ -166,29 +146,14 @@ const Login: React.FC = () => {
                 };
                 source.start();
             } else {
-                console.error("Could not generate audio from API, using fallback TTS");
-                fallbackSpeak(text, handleEnd);
+                console.error("Could not generate audio from API.");
+                handleEnd();
             }
         } catch (error) {
             console.error("Gemini TTS API error:", error);
-            fallbackSpeak(text, handleEnd);
+            handleEnd();
         }
     }, [playBeep, stopSpeaking, getAiClient]);
-
-    const fallbackSpeak = useCallback((text: string, onComplete?: () => void) => {
-        try {
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.onend = onComplete;
-            utterance.onerror = (error) => {
-                console.error("Speech synthesis error:", error);
-                onComplete?.();
-            };
-            speechSynthesis.speak(utterance);
-        } catch (error) {
-            console.error("Failed to use fallback TTS:", error);
-            onComplete?.();
-        }
-    }, []);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -211,7 +176,9 @@ const Login: React.FC = () => {
         
         recognition.onerror = (event) => {
             console.error('Speech recognition error:', event.error);
-            if(event.error !== 'no-speech') {
+            if (event.error === 'no-speech') {
+                speak("I didn't hear anything. Let's try that again.", startListening);
+            } else {
                 speak("Sorry, I had trouble understanding. Please try again.", cancelVoiceLogin);
             }
         };

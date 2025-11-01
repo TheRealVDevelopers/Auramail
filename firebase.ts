@@ -1,5 +1,4 @@
 // Import the functions you need from the SDKs you need
-// Fix: Use firebase/compat/app for v9 compatibility with the v8 SDK API.
 import firebase from "firebase/compat/app";
 import "firebase/compat/analytics";
 import "firebase/compat/auth";
@@ -16,15 +15,17 @@ const firebaseConfig = {
   measurementId: "G-8F32NW8L3N"
 };
 
-// Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-
-try {
-  firebase.analytics();
-} catch (e) {
-  console.error("Firebase Analytics not supported in this environment.", e);
+// Initialize Firebase, but only if it hasn't been initialized already.
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+  try {
+    firebase.analytics();
+  } catch (e) {
+    console.error("Firebase Analytics not supported in this environment.", e);
+  }
 }
 
 
 export const auth = firebase.auth();
 export const db = firebase.firestore();
+export default firebase;

@@ -1,8 +1,5 @@
-// Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/firestore';
-import 'firebase/compat/auth';
-import { db } from '../firebase';
+// Fix: Remove direct Firebase imports and use the centralized module
+import firebase, { db } from '../firebase';
 import { Email, Folder } from '../types';
 
 const getEmailsCollection = (userId: string) => db.collection('users').doc(userId).collection('emails');

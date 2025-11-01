@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
-// Fix: Use v8 namespaced imports and types for Firebase
-// Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
-import 'firebase/compat/auth';
+// Fix: Remove direct Firebase import. Only need initialized `auth`.
 import { auth } from '../firebase.js';
 import { Folder } from '../types.js';
 import { getEmails } from '../services/emailService.js';
@@ -16,7 +14,7 @@ const initialState = {
   composeEmail: {},
   loading: true, // Start loading to check auth status
   error: null,
-  isChatbotOpen: true, // Chatbot open by default
+  isChatbotOpen: false,
   currentLanguage: 'en-US',
 };
 
@@ -25,7 +23,7 @@ const appReducer = (state, action) => {
     case 'LOGIN_SUCCESS':
       return { ...state, isAuthenticated: true, userProfile: action.payload, loading: false, error: null };
     case 'LOGOUT_SUCCESS':
-      return { ...initialState, isAuthenticated: false, userProfile: null, loading: false, isChatbotOpen: true };
+      return { ...initialState, isAuthenticated: false, userProfile: null, loading: false };
     case 'FETCH_EMAILS_START':
       return { ...state, loading: true, error: null, emails: [], selectedEmail: null };
     case 'FETCH_EMAILS_SUCCESS':
@@ -90,8 +88,7 @@ export const AppProvider = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   useEffect(() => {
-    // Fix: Use v8 `auth.onAuthStateChanged` method and `firebase.User` type
-    // The firebase.User type is available on the global firebase object from the script tag.
+    // Fix: Use v8 `auth.onAuthStateChanged` method.
     const unsubscribe = auth.onAuthStateChanged((user) => {
       if (user) {
         const userProfile = {

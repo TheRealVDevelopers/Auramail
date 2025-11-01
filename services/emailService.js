@@ -1,7 +1,5 @@
-// Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/firestore';
-import { db } from '../firebase.js';
+// Fix: Remove direct Firebase imports and use the centralized module
+import firebase, { db } from '../firebase.js';
 import { Folder } from '../types.js';
 
 const getEmailsCollection = (userId) => db.collection('users').doc(userId).collection('emails');
@@ -31,7 +29,6 @@ export const getUnreadCount = async (userId, folder) => {
 /**
  * Sets up a new user by creating their profile document, claiming their username, and seeding initial emails.
  */
-// Fix: Use `firebase.User` type from v8 SDK.
 export const setupNewUser = async (user, username) => {
     const normalizedUsername = username.trim().toLowerCase();
 
@@ -110,11 +107,8 @@ export const getEmails = async (userId, folder) => {
     // Map to an intermediate array that includes the original Date object for reliable sorting.
     const tempEmails = querySnapshot.docs.map(doc => {
         const data = doc.data();
-        // Fix: Use `firebase.firestore.Timestamp` for type casting
+        // The timestamp is a Firestore Timestamp object; convert it to a JS Date.
         const date = (data.timestamp)?.toDate() ?? new Date();
-        // Fix: Nest the document data instead of spreading it. Spreading a `DocumentData`
-        // object can cause TypeScript to lose track of the specific properties, leading to
-        // type errors in subsequent operations.
         return {
             data: data,
             id: doc.id,
@@ -128,7 +122,6 @@ export const getEmails = async (userId, folder) => {
     // Map to the final Email[] format, converting the timestamp to a string for display.
     const emails = tempEmails.map(item => ({
         id: item.id,
-        // Fix: Access properties from the nested `data` object to resolve property not found errors.
         threadId: item.data.threadId,
         sender: item.data.sender,
         senderEmail: item.data.senderEmail,
@@ -150,11 +143,9 @@ export const sendEmail = async (senderUid, email, draftId) => {
             ...email,
             folder: Folder.SENT,
             read: true,
-            // Fix: Use `firebase.firestore.FieldValue.serverTimestamp()`
             timestamp: firebase.firestore.FieldValue.serverTimestamp(),
         };
         const senderEmailsCol = getEmailsCollection(senderUid);
-        // Fix: Use v8 `.add()` method
         await senderEmailsCol.add(sentEmailData);
         if (draftId) {
             await deleteEmailPermanently(senderUid, draftId);

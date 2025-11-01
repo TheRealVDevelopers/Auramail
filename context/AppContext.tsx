@@ -1,9 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-// Fix: Use v8 namespaced imports and types for Firebase
-// Fix: Update Firebase imports to use the v9 compatibility layer ('compat') to match the v8 SDK API.
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/auth';
-import { auth } from '../firebase';
+// Fix: Remove direct Firebase imports and use the centralized module
+import firebase, { auth } from '../firebase';
 import { Email, Folder, UserProfile } from '../types';
 import { getEmails } from '../services/emailService';
 
@@ -50,7 +47,7 @@ const initialState: AppState = {
   composeEmail: {},
   loading: true, // Start loading to check auth status
   error: null,
-  isChatbotOpen: true, // Chatbot open by default
+  isChatbotOpen: false,
   currentLanguage: 'en-US',
 };
 
@@ -59,7 +56,7 @@ const appReducer = (state: AppState, action: Action): AppState => {
     case 'LOGIN_SUCCESS':
       return { ...state, isAuthenticated: true, userProfile: action.payload, loading: false, error: null };
     case 'LOGOUT_SUCCESS':
-      return { ...initialState, isAuthenticated: false, userProfile: null, loading: false, isChatbotOpen: true };
+      return { ...initialState, isAuthenticated: false, userProfile: null, loading: false };
     case 'FETCH_EMAILS_START':
       return { ...state, loading: true, error: null, emails: [], selectedEmail: null };
     case 'FETCH_EMAILS_SUCCESS':
@@ -127,8 +124,7 @@ export const AppProvider: React.FC<{children: ReactNode}> = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   useEffect(() => {
-    // Fix: Use v8 `auth.onAuthStateChanged` method and `firebase.User` type
-    // The firebase.User type is available on the global firebase object from the script tag.
+    // The firebase.User type is available via the default export from our firebase module.
     const unsubscribe = auth.onAuthStateChanged((user: firebase.User | null) => {
       if (user) {
         const userProfile: UserProfile = {

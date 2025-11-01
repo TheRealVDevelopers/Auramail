@@ -67,8 +67,6 @@ const Chatbot: React.FC = () => {
     const [isListening, setIsListening] = useState(false);
     const [chatbotStatus, setChatbotStatus] = useState<'IDLE' | 'LISTENING' | 'PROCESSING' | 'SPEAKING'>('IDLE');
     const [isMuted, setIsMuted] = useState(false);
-    const [shouldRestartListening, setShouldRestartListening] = useState(false);
-    const [needsUserGesture, setNeedsUserGesture] = useState(true); // Start with need for user gesture
     
     const [composeState, setComposeState] = useState<{
         active: boolean;
@@ -82,15 +80,15 @@ const Chatbot: React.FC = () => {
     const audioContextRef = useRef<AudioContext | null>(null);
     const currentAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
     const transcriptEndRef = useRef<HTMLDivElement>(null);
-    const welcomeSpoken = useRef(false);
-    const welcomeMessageShown = useRef(false);
+    const spokenWelcome = useRef(false);
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
 
     const getAiClient = useCallback(() => {
         if (!aiRef.current) {
-            aiRef.current = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
+            // Fix: Use process.env.API_KEY as per the guidelines. This is replaced by the bundler.
+            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
         }
         return aiRef.current;
     }, []);
@@ -118,14 +116,9 @@ const Chatbot: React.FC = () => {
         }
     }, []);
 
-    const speak = useCallback(async (text: string | React.ReactNode, onComplete?: () => void, skipTranscript = false) => {
+    const speak = useCallback(async (text: string | React.ReactNode, onComplete?: () => void) => {
         const textToSpeak = typeof text === 'string' ? text : ' '; // Only speak string content
-        
-        // Only add to transcript if not skipped
-        if (!skipTranscript) {
-            setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
-        }
-        
+        setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
         stopSpeaking();
         
         const handleEnd = () => {
@@ -140,30 +133,6 @@ const Chatbot: React.FC = () => {
         }
 
         setChatbotStatus('SPEAKING');
-
-        // Ensure AudioContext is initialized
-        if (!audioContextRef.current) {
-            try {
-                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-            } catch (error) {
-                console.error("Failed to initialize AudioContext:", error);
-                // Fallback to browser speech synthesis
-                fallbackSpeak(textToSpeak, handleEnd);
-                return;
-            }
-        }
-
-        // Check if API key is available
-        if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'YOUR_API_KEY_HERE') {
-            console.warn("Gemini API key not configured, using fallback TTS");
-            fallbackSpeak(textToSpeak, handleEnd);
-            return;
-        }
-
-        // Force fallback TTS due to quota issues - comment this out when quota is restored
-        console.warn("Forcing fallback TTS due to API quota issues");
-        fallbackSpeak(textToSpeak, handleEnd);
-        return;
 
         try {
             const ai = getAiClient();
@@ -192,46 +161,14 @@ const Chatbot: React.FC = () => {
                 };
                 source.start();
             } else {
-                console.error("Could not generate audio from API, using fallback TTS");
-                fallbackSpeak(textToSpeak, handleEnd);
+                console.error("Could not generate audio from API.");
+                handleEnd();
             }
         } catch (error) {
             console.error("Gemini TTS API error:", error);
-            fallbackSpeak(textToSpeak, handleEnd);
+            handleEnd();
         }
     }, [isMuted, isListening, playBeep, stopSpeaking, getAiClient]);
-
-    const fallbackSpeak = useCallback((text: string, onComplete?: () => void) => {
-        try {
-            // Stop any current speech
-            speechSynthesis.cancel();
-            
-            // Wait a bit for cancellation to complete
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.volume = 1.0;
-                utterance.rate = 0.9;
-                utterance.pitch = 1.0;
-                
-                utterance.onend = () => {
-                    console.log("Fallback TTS completed");
-                    onComplete?.();
-                };
-                
-                utterance.onerror = (error) => {
-                    console.error("Speech synthesis error:", error);
-                    // Try to continue anyway
-                    onComplete?.();
-                };
-                
-                console.log("Attempting fallback TTS with text:", text);
-                speechSynthesis.speak(utterance);
-            }, 100);
-        } catch (error) {
-            console.error("Failed to use fallback TTS:", error);
-            onComplete?.();
-        }
-    }, []);
 
     const functionDeclarations: FunctionDeclaration[] = [
         {
@@ -532,23 +469,13 @@ const Chatbot: React.FC = () => {
             }
 
             if (finalResponseText.trim()) {
-                // After speaking the response, automatically restart listening
-                await speak(finalResponseText.trim(), () => {
-                    console.log('AI response completed, will restart voice recording');
-                    // Signal to restart listening
-                    setShouldRestartListening(true);
-                });
-            } else {
-                // If no response, still restart listening
-                setShouldRestartListening(true);
+                await speak(finalResponseText.trim());
             }
 
-        } catch (error) {
+        } catch (error: any) {
             console.error("Text generation error:", error);
-            await speak("Sorry, I encountered an error.", () => {
-                // Restart listening even after error
-                setShouldRestartListening(true);
-            });
+            const errorMessage = `Sorry, an error occurred: ${error.message || 'Please check the console for details.'}`;
+            await speak(errorMessage);
         } finally {
             if (!composeStateRef.current.active) {
                 setChatbotStatus('IDLE');
@@ -564,98 +491,6 @@ const Chatbot: React.FC = () => {
             await processTranscript(text);
         }
     };
-    
-    // Handle user clicking to enable voice - this provides the required user gesture
-    const handleEnableVoice = useCallback(() => {
-        // Prevent multiple calls
-        if (!needsUserGesture) {
-            console.log('[ENABLE] Already enabled, ignoring');
-            return;
-        }
-        
-        console.log('[ENABLE] User clicked to enable voice');
-        setNeedsUserGesture(false);
-        
-        // Initialize AudioContext
-        if (!audioContextRef.current) {
-            try {
-                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-                console.log('[ENABLE] AudioContext created');
-            } catch (error) {
-                console.error('[ENABLE] Failed to create AudioContext:', error);
-            }
-        }
-        
-        // Resume if suspended
-        if (audioContextRef.current?.state === 'suspended') {
-            audioContextRef.current.resume().then(() => {
-                console.log('[ENABLE] AudioContext resumed');
-            });
-        }
-        
-        // Get welcome message - DON'T add to transcript again (already shown)
-        const welcomeText = t('welcomeMessage');
-        console.log('[ENABLE] Speaking welcome (not adding to transcript):', welcomeText);
-        
-        // Use speechSynthesis with proper error handling
-        try {
-            speechSynthesis.cancel(); // Clear any pending
-            
-            const utterance = new SpeechSynthesisUtterance(welcomeText);
-            utterance.volume = 1.0;
-            utterance.rate = 0.9;
-            utterance.pitch = 1.0;
-            
-            utterance.onstart = () => {
-                console.log('[ENABLE] Speech started');
-                setChatbotStatus('SPEAKING');
-            };
-            
-            utterance.onend = () => {
-                console.log('[ENABLE] Speech ended, playing beep');
-                setChatbotStatus('IDLE');
-                
-                // Play beep
-                if (audioContextRef.current) {
-                    const context = audioContextRef.current;
-                    const oscillator = context.createOscillator();
-                    const gain = context.createGain();
-                    oscillator.connect(gain);
-                    gain.connect(context.destination);
-                    oscillator.frequency.value = 880;
-                    gain.gain.setValueAtTime(0, context.currentTime);
-                    gain.gain.linearRampToValueAtTime(0.3, context.currentTime + 0.05);
-                    gain.gain.linearRampToValueAtTime(0, context.currentTime + 0.15);
-                    oscillator.start();
-                    oscillator.stop(context.currentTime + 0.2);
-                }
-                
-                // Start listening after beep
-                setTimeout(() => {
-                    console.log('[ENABLE] Starting voice recording');
-                    setShouldRestartListening(true);
-                }, 400);
-            };
-            
-            utterance.onerror = (event) => {
-                console.error('[ENABLE] Speech error:', event);
-                setChatbotStatus('IDLE');
-                // Still try to start listening
-                setTimeout(() => {
-                    setShouldRestartListening(true);
-                }, 400);
-            };
-            
-            console.log('[ENABLE] Calling speechSynthesis.speak()');
-            speechSynthesis.speak(utterance);
-        } catch (error) {
-            console.error('[ENABLE] Failed to speak:', error);
-            // Fallback: just start listening
-            setTimeout(() => {
-                setShouldRestartListening(true);
-            }, 400);
-        }
-    }, [t, needsUserGesture]); // Add needsUserGesture as dependency
     
     const toggleListening = useCallback(() => {
         if (isListening) {
@@ -692,7 +527,9 @@ const Chatbot: React.FC = () => {
             };
             recognition.onerror = (event) => {
                 console.error("Speech recognition error", event.error);
-                if(event.error !== 'no-speech') {
+                if (event.error === 'no-speech') {
+                    speak("I didn't hear anything. Please try again when you're ready.");
+                } else {
                     speak("Sorry, there was a recognition error.");
                 }
             };
@@ -719,24 +556,14 @@ const Chatbot: React.FC = () => {
         if (!audioContextRef.current) {
             audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
         }
-    }, []);
-
-    // Show welcome message in transcript once - ONLY display, don't speak
-    useEffect(() => {
-        if (!welcomeMessageShown.current) {
-            welcomeMessageShown.current = true;
-            console.log('[INIT] Showing welcome message in transcript');
-            const welcomeMsg = t('welcomeMessage');
-            console.log('[INIT] Welcome message text:', welcomeMsg);
-            setTranscript([{ 
-                id: `ai-welcome-${Date.now()}`, 
-                text: welcomeMsg, 
-                isUser: false, 
-                timestamp: Date.now() 
-            }]);
+        
+        if (!spokenWelcome.current && !isMuted) {
+            spokenWelcome.current = true;
+            speak(t('welcomeMessage'));
         }
-    }, []); // Run once on mount
-    
+
+    }, [isMuted, speak, t]);
+
     useEffect(() => {
         return () => { 
             stopSpeaking();
@@ -745,23 +572,21 @@ const Chatbot: React.FC = () => {
         };
     }, [stopSpeaking]);
 
-    // Auto-restart listening effect
-    useEffect(() => {
-        if (shouldRestartListening && !isListening && !composeStateRef.current.active) {
-            console.log('Auto-restarting voice recording');
-            setShouldRestartListening(false);
-            // Small delay before restarting to ensure clean state
-            const timer = setTimeout(() => {
-                toggleListening();
-            }, 300);
-            return () => clearTimeout(timer);
-        }
-    }, [shouldRestartListening, isListening, toggleListening]);
-
     const handleMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+        // Prevent dragging when clicking on any button inside the header
+        const target = e.target as Node;
+        // When clicking an icon, the target can be an SVGElement. For text, it's a text node.
+        // This logic ensures we get a valid Element to check for a parent button.
+        const element = target.nodeType === Node.TEXT_NODE ? target.parentElement : (target as Element);
+
+        if (element?.closest('button')) {
+            return;
+        }
+        
         setIsDragging(true);
         setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     };
+
     const handleMouseMove = (e: MouseEvent) => {
         if (isDragging) setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
     };
@@ -793,13 +618,6 @@ const Chatbot: React.FC = () => {
         <div 
             className="fixed flex flex-col bg-white rounded-lg shadow-2xl border border-gray-200" 
             style={{ left: position.x, top: position.y, width: '400px', height: '500px' }}
-            onClick={(e) => {
-                // If user needs to enable voice and clicks anywhere (except draggable header), enable it
-                if (needsUserGesture && !(e.target as HTMLElement).closest('header')) {
-                    console.log('[CLICK] User clicked chatbot, enabling voice');
-                    handleEnableVoice();
-                }
-            }}
         >
             <header 
                 className="flex items-center justify-between p-3 bg-gray-100 rounded-t-lg border-b border-gray-200 cursor-move"
@@ -824,23 +642,7 @@ const Chatbot: React.FC = () => {
                     </button>
                 </div>
             </header>
-            <div className="flex-1 p-4 overflow-y-auto bg-gray-50 relative">
-                {/* Show enable voice overlay if user gesture is needed */}
-                {needsUserGesture && (
-                    <div className="absolute inset-0 bg-blue-50 bg-opacity-95 flex items-center justify-center z-10 cursor-pointer"
-                         onClick={handleEnableVoice}>
-                        <div className="text-center p-6">
-                            <div className="mb-4">
-                                <SpeakerIcon className="w-16 h-16 mx-auto text-blue-600 animate-pulse" />
-                            </div>
-                            <h3 className="text-lg font-bold text-gray-800 mb-2">🎤 Voice Assistant Ready</h3>
-                            <p className="text-sm text-gray-600 mb-4">Click anywhere to start</p>
-                            <div className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg shadow-lg animate-bounce">
-                                Click to Enable
-                            </div>
-                        </div>
-                    </div>
-                )}
+            <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
                 {transcript.map((item) => (
                     <div key={item.id} className={`my-2 flex ${item.isUser ? 'justify-end' : 'justify-start'}`}>
                         <div className={`px-4 py-2 rounded-lg max-w-xs text-sm ${item.isUser ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'}`}>

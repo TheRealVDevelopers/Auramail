@@ -31,6 +31,7 @@ export const getUnreadCount = async (userId, folder) => {
  */
 export const setupNewUser = async (user, username) => {
     const normalizedUsername = username.trim().toLowerCase();
+    const normalizedEmail = user.email?.trim().toLowerCase();
 
     // Use a batch write to ensure atomic operation
     const batch = db.batch();
@@ -39,7 +40,7 @@ export const setupNewUser = async (user, username) => {
     const userDocRef = db.collection('users').doc(user.uid);
     batch.set(userDocRef, {
         uid: user.uid,
-        email: user.email?.trim().toLowerCase() || null,
+        email: normalizedEmail || null,
         username: normalizedUsername,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
@@ -48,15 +49,21 @@ export const setupNewUser = async (user, username) => {
     const usernameDocRef = db.collection('usernames').doc(normalizedUsername);
     batch.set(usernameDocRef, { uid: user.uid });
     
+    // 3. Create email lookup document to allow finding users by email without querying the private users collection.
+    if (normalizedEmail) {
+        const emailLookupDocRef = db.collection('email_lookups').doc(normalizedEmail);
+        batch.set(emailLookupDocRef, { uid: user.uid });
+    }
+
     // Commit the batch
     await batch.commit();
 
-    // 3. Update the user's profile in Firebase Auth itself
+    // 4. Update the user's profile in Firebase Auth itself
     await user.updateProfile({
         displayName: username.trim(), // Use the original casing for display
     });
 
-    // 4. Seed initial emails for the new user
+    // 5. Seed initial emails for the new user
     await seedEmailsForNewUser(user.uid);
 };
 
@@ -65,21 +72,18 @@ export const setupNewUser = async (user, username) => {
  * @returns The user's UID string, or null if not found.
  */
 const findUserByEmail = async (email) => {
-    const usersCol = getUsersCollection();
     // Normalize the input email by trimming whitespace and converting to lowercase to match the stored format.
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
         return null; // Don't query for an empty or whitespace-only string
     }
-    // Fix: Use v8 `where` and `get` methods.
-    const q = usersCol.where('email', '==', normalizedEmail);
-    const querySnapshot = await q.get();
+    // Perform a direct document lookup instead of a query for better performance and to avoid security rule issues.
+    const emailLookupDoc = await db.collection('email_lookups').doc(normalizedEmail).get();
 
-    if (querySnapshot.empty) {
-        return null;
+    if (emailLookupDoc.exists) {
+        return emailLookupDoc.data()?.uid || null;
     }
-    // Assuming email is unique, there should be only one document.
-    return querySnapshot.docs[0].id;
+    return null;
 };
 
 /**
@@ -189,7 +193,7 @@ export const sendEmail = async (senderUid, email, draftId) => {
         console.error("Delivery Error:", error);
         return { 
             success: false, 
-            message: `CRITICAL: Email delivery failed due to a database error. This usually means a database index is missing. Please OPEN THE DEVELOPER CONSOLE (F12), find the error message, and CLICK THE LINK in it to create the required index. Your email has been saved in 'Sent'.` 
+            message: `CRITICAL: Email delivery failed. This is likely due to a backend configuration issue (missing Firestore security rules or indexes). Please OPEN THE DEVELOPER CONSOLE (F12), check for a "PERMISSION_DENIED" error or a link to create a missing index, and contact support. Your email has been saved in your 'Sent' folder.` 
         };
     }
 };

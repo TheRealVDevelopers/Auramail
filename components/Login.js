@@ -1,15 +1,11 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI, Modality } from '@google/genai';
 import { auth, db } from '../firebase.js';
 import { setupNewUser } from '../services/emailService.js';
 import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents.js';
 import { useAppContext } from '../context/AppContext.js';
 import { useTranslations } from '../utils/translations.js';
-import { decode, decodeAudioData } from '../utils/audioUtils.js';
 
 const Login = () => {
-    const aiRef = useRef(null);
     const { state } = useAppContext();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
@@ -25,7 +21,6 @@ const Login = () => {
 
     const recognitionRef = useRef(null);
     const audioContextRef = useRef(null);
-    const currentAudioSourceRef = useRef(null);
     const voiceStepRef = useRef(voiceStep);
     useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
     const isRegisteringRef = useRef(isRegistering);
@@ -33,14 +28,6 @@ const Login = () => {
     const handleVoiceInputRef = useRef(() => {});
 
     const t = useTranslations();
-
-    const getAiClient = useCallback(() => {
-        if (!aiRef.current) {
-            // Fix: Use process.env.API_KEY as per the guidelines. This is replaced by the bundler.
-            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        }
-        return aiRef.current;
-    }, []);
 
     const playBeep = useCallback((freq = 880) => {
         if (!audioContextRef.current) return;
@@ -63,8 +50,9 @@ const Login = () => {
     }, []);
 
     const stopSpeaking = useCallback(() => {
-        currentAudioSourceRef.current?.stop();
-        currentAudioSourceRef.current = null;
+        if ('speechSynthesis' in window) {
+            speechSynthesis.cancel();
+        }
     }, []);
 
     const cancelVoiceLogin = useCallback(() => {
@@ -80,49 +68,35 @@ const Login = () => {
         setTranscribedText('');
     }, [stopListening, stopSpeaking]);
 
-    const speak = useCallback(async (text, onComplete) => {
-        stopSpeaking();
-
-        const handleEnd = () => {
-            playBeep();
-            onComplete?.();
-        };
-
-        try {
-            const ai = getAiClient();
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-                },
-            });
-
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-            if (base64Audio && audioContextRef.current) {
-                const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
-                const source = audioContextRef.current.createBufferSource();
-                currentAudioSourceRef.current = source;
-                source.buffer = audioBuffer;
-                source.connect(audioContextRef.current.destination);
-                source.onended = () => {
-                    if (currentAudioSourceRef.current === source) {
-                        currentAudioSourceRef.current = null;
-                        handleEnd();
-                    }
-                };
-                source.start();
-            } else {
-                console.error("Could not generate audio from API.");
+    const speak = useCallback((text, onComplete) => {
+        return new Promise((resolve) => {
+            stopSpeaking();
+    
+            const handleEnd = () => {
+                playBeep();
+                onComplete?.();
+                resolve();
+            };
+    
+            if (!('speechSynthesis' in window)) {
+                console.error("Browser does not support Speech Synthesis.");
                 handleEnd();
+                return;
             }
-        } catch (error) {
-            console.error("Gemini TTS API error:", error);
-            handleEnd();
-        }
-    }, [playBeep, stopSpeaking, getAiClient]);
+    
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = state.currentLanguage;
+            utterance.onend = handleEnd;
+            utterance.onerror = (e) => {
+                // Only log errors that are not interruptions, as they are expected.
+                if (e.error !== 'interrupted') {
+                    console.error("SpeechSynthesis Error:", e.error);
+                }
+                // The 'onend' event will fire after 'onerror', so we don't call handleEnd here.
+            };
+            speechSynthesis.speak(utterance);
+        });
+    }, [playBeep, stopSpeaking, state.currentLanguage]);
 
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window).webkitSpeechRecognition;
@@ -280,7 +254,7 @@ const Login = () => {
 
     const handleVoiceLoginStart = () => {
         setIsVoiceLoginActive(true);
-        audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)({ sampleRate: 24000 });
+        audioContextRef.current = new (window.AudioContext || (window).webkitAudioContext)();
         setVoiceStep('action');
         const feedback = 'Welcome! Would you like to log in or register?';
         setVoiceFeedback(feedback);

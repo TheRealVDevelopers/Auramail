@@ -31,15 +31,13 @@ declare global {
 }
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI, Type, FunctionDeclaration, FunctionCall, Modality } from '@google/genai';
 import { auth } from '../firebase';
 import { useAppContext } from '../context/AppContext';
 import { Transcript, Folder, Email } from '../types';
-import { INITIAL_SYSTEM_PROMPT, SUPPORTED_LANGUAGES } from '../constants';
+import { SUPPORTED_LANGUAGES } from '../constants';
 import { MicIcon, PaperAirplaneIcon, PauseIcon, SpeakerIcon, SpeakerOffIcon } from './icons/IconComponents';
 import { updateEmailFolder, getUnreadCount, sendEmail, markEmailAsRead } from '../services/emailService';
 import { useTranslations } from '../utils/translations';
-import { decode, decodeAudioData } from '../utils/audioUtils';
 
 const EmailPreview: React.FC<{ draft: Partial<Email> }> = ({ draft }) => (
     <div className="border border-gray-300 rounded-md p-3 my-1 bg-white text-gray-800">
@@ -55,7 +53,6 @@ const EmailPreview: React.FC<{ draft: Partial<Email> }> = ({ draft }) => (
 
 
 const Chatbot: React.FC = () => {
-    const aiRef = useRef<GoogleGenAI | null>(null);
     const { state, dispatch } = useAppContext();
     const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
@@ -78,20 +75,11 @@ const Chatbot: React.FC = () => {
     // Refs for async operations and cleanup
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const currentAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
     const transcriptEndRef = useRef<HTMLDivElement>(null);
     const spokenWelcome = useRef(false);
     
     const composeStateRef = useRef(composeState);
     useEffect(() => { composeStateRef.current = composeState; }, [composeState]);
-
-    const getAiClient = useCallback(() => {
-        if (!aiRef.current) {
-            // Fix: Use process.env.API_KEY as per the guidelines. This is replaced by the bundler.
-            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-        }
-        return aiRef.current;
-    }, []);
 
     const playBeep = useCallback(() => {
         if (!audioContextRef.current) return;
@@ -109,225 +97,43 @@ const Chatbot: React.FC = () => {
     }, []);
 
     const stopSpeaking = useCallback(() => {
-        currentAudioSourceRef.current?.stop();
-        currentAudioSourceRef.current = null;
         if ('speechSynthesis' in window) {
             speechSynthesis.cancel();
         }
     }, []);
 
-    const speak = useCallback(async (text: string | React.ReactNode, onComplete?: () => void) => {
-        const textToSpeak = typeof text === 'string' ? text : ' '; // Only speak string content
-        setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
-        stopSpeaking();
-        
-        const handleEnd = () => {
-            setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
-            playBeep();
-            onComplete?.();
-        };
-
-        if (isMuted || typeof text !== 'string') {
-            handleEnd();
-            return;
-        }
-
-        setChatbotStatus('SPEAKING');
-
-        try {
-            const ai = getAiClient();
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text: textToSpeak }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-                },
-            });
-
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-            if (base64Audio && audioContextRef.current) {
-                const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
-                const source = audioContextRef.current.createBufferSource();
-                currentAudioSourceRef.current = source;
-                source.buffer = audioBuffer;
-                source.connect(audioContextRef.current.destination);
-                source.onended = () => {
-                    if (currentAudioSourceRef.current === source) {
-                        currentAudioSourceRef.current = null;
-                        handleEnd();
-                    }
-                };
-                source.start();
-            } else {
-                console.error("Could not generate audio from API.");
-                handleEnd();
-            }
-        } catch (error) {
-            console.error("Gemini TTS API error:", error);
-            handleEnd();
-        }
-    }, [isMuted, isListening, playBeep, stopSpeaking, getAiClient]);
-
-    const functionDeclarations: FunctionDeclaration[] = [
-        {
-            name: 'open_folder',
-            description: 'Opens a specific email folder (Inbox, Sent, Spam, Trash).',
-            parameters: {
-                type: Type.OBJECT,
-                properties: { folder_name: { type: Type.STRING, enum: Object.values(Folder) } },
-                required: ['folder_name'],
-            },
-        },
-        {
-            name: 'start_interactive_composition',
-            description: 'Starts a step-by-step conversational process to compose a new email.',
-            parameters: { type: Type.OBJECT, properties: {} },
-        },
-        {
-            name: 'select_email',
-            description: 'Selects an email from the list. The user must provide the ID.',
-            parameters: {
-                type: Type.OBJECT,
-                properties: { email_id: { type: Type.STRING } },
-                required: ['email_id'],
-            }
-        },
-        {
-            name: 'read_email_by_index',
-            description: 'Reads the content of a specific email from the current list aloud, based on its position (e.g., 1 for the first, 2 for the second).',
-            parameters: {
-                type: Type.OBJECT,
-                properties: { index: { type: Type.NUMBER, description: 'The 1-based index of the email in the list.' } },
-                required: ['index'],
-            },
-        },
-        {
-            name: 'stop_reading',
-            description: 'Immediately stops the chatbot from speaking the current message.',
-            parameters: { type: Type.OBJECT, properties: {} },
-        },
-        {
-            name: 'delete_selected_email',
-            description: 'Deletes the currently selected email.',
-            parameters: { type: Type.OBJECT, properties: {} },
-        },
-        {
-            name: 'mark_selected_as_spam',
-            description: 'Moves the currently selected email to Spam.',
-            parameters: { type: Type.OBJECT, properties: {} },
-        },
-        {
-            name: 'logout',
-            description: 'Logs the user out of the application.',
-            parameters: { type: Type.OBJECT, properties: {} },
-        },
-        {
-            name: 'change_language',
-            description: 'Changes the application and chatbot language.',
-            parameters: {
-                type: Type.OBJECT,
-                properties: {
-                    language_code: {
-                        type: Type.STRING,
-                        description: 'The language code to switch to.',
-                        enum: SUPPORTED_LANGUAGES.map(l => l.code),
-                    },
-                },
-                required: ['language_code'],
-            },
-        },
-    ];
-
-    const tools = [{ functionDeclarations }];
+    const speak = useCallback((text: string | React.ReactNode) => {
+        return new Promise<void>((resolve) => {
+            const textToSpeak = typeof text === 'string' ? text : ' '; // Only speak string content
+            setTranscript(prev => [...prev, { id: `ai-${Date.now()}`, text, isUser: false, timestamp: Date.now() }]);
+            stopSpeaking();
+            
+            const handleEnd = () => {
+                setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
+                playBeep();
+                resolve();
+            };
     
-    const handleFunctionCall = useCallback(async (fc: FunctionCall) => {
-        setChatbotStatus('PROCESSING');
-        const { name, args } = fc;
-        const { userProfile, selectedEmail } = state;
-        let resultText = t('done');
-        
-        switch (name) {
-            case 'open_folder': {
-                const folder = args.folder_name as Folder;
-                if (folder && Object.values(Folder).includes(folder)) {
-                    dispatch({ type: 'SELECT_FOLDER', payload: folder });
-                    const count = userProfile ? await getUnreadCount(userProfile.uid, folder) : 0;
-                    resultText = t('openingFolderUnreadCount', { folder: t(folder.toLowerCase() as keyof ReturnType<typeof useTranslations>), count });
+            if (isMuted || typeof text !== 'string' || !('speechSynthesis' in window)) {
+                if (!('speechSynthesis' in window)) console.error("Browser does not support Speech Synthesis.");
+                handleEnd();
+                return;
+            }
+    
+            setChatbotStatus('SPEAKING');
+            const utterance = new SpeechSynthesisUtterance(textToSpeak);
+            utterance.lang = state.currentLanguage;
+            utterance.onend = handleEnd;
+            utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
+                // Only log errors that are not interruptions, as they are expected.
+                if (e.error !== 'interrupted') {
+                    console.error("SpeechSynthesis Error:", e.error);
                 }
-                break;
-            }
-            case 'start_interactive_composition': {
-                setComposeState({ active: true, step: 'recipient', draft: {}, fieldToChange: '' });
-                speak(t('composeRecipientPrompt'));
-                return ''; // Don't return text to speak, `speak` is called directly
-            }
-            case 'select_email': {
-                if (args.email_id) dispatch({ type: 'SELECT_EMAIL', payload: args.email_id as string });
-                break;
-            }
-            case 'read_email_by_index': {
-                const index = args.index as number;
-                if (index && index > 0 && state.emails.length >= index) {
-                    const emailToRead = state.emails[index - 1];
-                    dispatch({ type: 'SELECT_EMAIL', payload: emailToRead.id });
-                    if (!emailToRead.read && userProfile) {
-                        markEmailAsRead(userProfile.uid, emailToRead.id).catch(err => console.error("Chatbot failed to mark as read:", err));
-                        dispatch({ type: 'MARK_AS_READ', payload: emailToRead.id });
-                    }
-                    const bodyText = emailToRead.body.replace(/<[^>]*>?/gm, '\n');
-                    const textToSpeak = `${t('readingEmailFrom', { sender: emailToRead.sender })}. ${t('subject')}: ${emailToRead.subject}. ${t('bodyStartsNow')}. ${bodyText}`;
-                    speak(textToSpeak);
-                    return '';
-                } else {
-                    resultText = t('emailNotFoundAtIndex', { index });
-                }
-                break;
-            }
-            case 'stop_reading': {
-                stopSpeaking();
-                setChatbotStatus('IDLE');
-                resultText = t('stopped');
-                break;
-            }
-            case 'delete_selected_email': {
-                if (userProfile && selectedEmail) {
-                    await updateEmailFolder(userProfile.uid, selectedEmail.id, Folder.TRASH);
-                    dispatch({ type: 'DELETE_EMAIL', payload: selectedEmail.id });
-                }
-                break;
-            }
-            case 'mark_selected_as_spam': {
-                if (userProfile && selectedEmail) {
-                    await updateEmailFolder(userProfile.uid, selectedEmail.id, Folder.SPAM);
-                    dispatch({ type: 'MOVE_TO_SPAM', payload: selectedEmail.id });
-                }
-                break;
-            }
-            case 'logout': {
-                auth.signOut().catch(error => console.error("Logout from chatbot failed", error));
-                resultText = t('signingOut');
-                break;
-            }
-            case 'change_language': {
-                const langCode = args.language_code as string;
-                const supported = SUPPORTED_LANGUAGES.find(l => l.code === langCode);
-                if (supported) {
-                    dispatch({ type: 'SET_LANGUAGE', payload: langCode });
-                    resultText = t('languageSwitched', { language: supported.name });
-                } else {
-                    resultText = t('languageNotSupported', { langCode });
-                }
-                break;
-            }
-            default:
-                console.warn(`Unknown function call: ${name}`);
-                resultText = t('functionNotRecognized', { name });
-        }
-
-        return resultText;
-    }, [dispatch, state, speak, t, stopSpeaking]);
+                // The 'onend' event will fire after 'onerror', so we don't call handleEnd() here.
+            };
+            speechSynthesis.speak(utterance);
+        });
+    }, [isMuted, isListening, playBeep, stopSpeaking, state.currentLanguage]);
 
     const handleComposeInput = useCallback(async (text: string) => {
         setTranscript(prev => [...prev, { id: `user-compose-${Date.now()}`, text, isUser: true, timestamp: Date.now() }]);
@@ -343,7 +149,6 @@ const Chatbot: React.FC = () => {
             case 'recipient': {
                 let recipientValue = text.trim();
                 const lowerText = text.toLowerCase();
-                // Only parse as an email if it sounds like one, otherwise preserve original text for usernames
                 if (lowerText.includes(' at ') || lowerText.includes(' dot ')) {
                     recipientValue = lowerText.split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('');
                 }
@@ -425,63 +230,105 @@ const Chatbot: React.FC = () => {
                 break;
         }
         
-        // FIX: Explicitly type `newState` to prevent the ternary operator from widening the types of `step` and `fieldToChange` to `string`.
         const newState: typeof composeState = shouldContinue 
             ? { active: true, step: nextStep, draft: updatedDraft, fieldToChange: nextFieldToChange }
             : { active: false, step: '', draft: {}, fieldToChange: '' };
         
         setComposeState(newState);
-
     }, [state.userProfile, dispatch, speak, t]);
 
     const processTranscript = useCallback(async (text: string) => {
         if (!text) return;
         setLiveTranscript('');
-
+    
         if (composeStateRef.current.active) {
             await handleComposeInput(text);
             return;
         }
-
+    
         setTranscript(prev => [...prev, { id: `user-${Date.now()}`, text, isUser: true, timestamp: Date.now() }]);
         setChatbotStatus('PROCESSING');
-
-        try {
-            const languageName = SUPPORTED_LANGUAGES.find(l => l.code === state.currentLanguage)?.name || 'English';
-            const systemInstruction = INITIAL_SYSTEM_PROMPT(state.currentFolder, state.emails, state.selectedEmail, languageName);
-            
-            const ai = getAiClient();
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: { parts: [{ text }] },
-                config: { systemInstruction, tools }
-            });
-
-            let finalResponseText = '';
-            if (response.functionCalls) {
-                for (const fc of response.functionCalls) {
-                    const result = await handleFunctionCall(fc);
-                    if (result) finalResponseText += result + ' ';
-                }
-            }
-            if(response.text) {
-                finalResponseText += response.text;
-            }
-
-            if (finalResponseText.trim()) {
-                await speak(finalResponseText.trim());
-            }
-
-        } catch (error: any) {
-            console.error("Text generation error:", error);
-            const errorMessage = `Sorry, an error occurred: ${error.message || 'Please check the console for details.'}`;
-            await speak(errorMessage);
-        } finally {
-            if (!composeStateRef.current.active) {
-                setChatbotStatus('IDLE');
+        
+        const lowerText = text.toLowerCase().trim();
+        let resultText = "Sorry, I didn't understand that command. You can say things like 'open inbox' or 'compose an email'.";
+    
+        const folderKeywords: { [key in Folder]?: string[] } = {
+            [Folder.INBOX]: ['inbox'],
+            [Folder.SENT]: ['sent', 'sentbox'],
+            [Folder.DRAFTS]: ['drafts', 'draft'],
+            [Folder.SPAM]: ['spam', 'junk'],
+            [Folder.TRASH]: ['trash', 'bin', 'deleted'],
+        };
+    
+        let commandHandled = false;
+    
+        for (const [folder, keywords] of Object.entries(folderKeywords)) {
+            if (keywords.some(kw => lowerText.includes(kw))) {
+                dispatch({ type: 'SELECT_FOLDER', payload: folder as Folder });
+                const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, folder as Folder) : 0;
+                resultText = t('openingFolderUnreadCount', { folder: t(folder.toLowerCase() as keyof ReturnType<typeof useTranslations>), count });
+                commandHandled = true;
+                break;
             }
         }
-    }, [state.currentFolder, state.emails, state.selectedEmail, state.currentLanguage, handleComposeInput, handleFunctionCall, speak, getAiClient]);
+    
+        if (!commandHandled) {
+            if (lowerText.startsWith('read')) {
+                const match = lowerText.match(/\d+|first|second|third|fourth|fifth/);
+                if (match) {
+                    let index = -1;
+                    const wordMap: { [key: string]: number } = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+                    index = wordMap[match[0]] || parseInt(match[0], 10);
+                    
+                    if (index > 0 && state.emails.length >= index) {
+                        const emailToRead = state.emails[index - 1];
+                        dispatch({ type: 'SELECT_EMAIL', payload: emailToRead.id });
+                        if (!emailToRead.read && state.userProfile) {
+                            markEmailAsRead(state.userProfile.uid, emailToRead.id).catch(console.error);
+                            dispatch({ type: 'MARK_AS_READ', payload: emailToRead.id });
+                        }
+                        const bodyText = emailToRead.body.replace(/<[^>]*>?/gm, '\n');
+                        resultText = `${t('readingEmailFrom', { sender: emailToRead.sender })}. ${t('subject')}: ${emailToRead.subject}. ${t('bodyStartsNow')}. ${bodyText}`;
+                    } else {
+                        resultText = t('emailNotFoundAtIndex', { index });
+                    }
+                } else {
+                    resultText = "Please specify which email to read, for example: 'read the first email'.";
+                }
+            } else if (lowerText.includes('compose') || lowerText.includes('new email') || lowerText.includes('write')) {
+                setComposeState({ active: true, step: 'recipient', draft: {}, fieldToChange: '' });
+                resultText = t('composeRecipientPrompt');
+            } else if (lowerText.includes('delete')) {
+                if (state.selectedEmail && state.userProfile) {
+                    await updateEmailFolder(state.userProfile.uid, state.selectedEmail.id, Folder.TRASH);
+                    dispatch({ type: 'DELETE_EMAIL', payload: state.selectedEmail.id });
+                    resultText = 'Email moved to trash.';
+                } else {
+                    resultText = 'Please select an email to delete first.';
+                }
+            } else if (lowerText.includes('mark as spam')) {
+                if (state.selectedEmail && state.userProfile) {
+                    await updateEmailFolder(state.userProfile.uid, state.selectedEmail.id, Folder.SPAM);
+                    dispatch({ type: 'MOVE_TO_SPAM', payload: state.selectedEmail.id });
+                    resultText = 'Email marked as spam.';
+                } else {
+                    resultText = 'Please select an email first.';
+                }
+            } else if (lowerText.includes('stop') || lowerText.includes('shut up')) {
+                stopSpeaking();
+                resultText = t('stopped');
+            } else if (lowerText.includes('logout') || lowerText.includes('sign out')) {
+                auth.signOut().catch(error => console.error("Logout from chatbot failed", error));
+                resultText = t('signingOut');
+            }
+        }
+    
+        await speak(resultText);
+    
+        if (!composeStateRef.current.active) {
+            setChatbotStatus('IDLE');
+        }
+    }, [state, dispatch, speak, handleComposeInput, t, stopSpeaking]);
 
     const handleTextSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -554,7 +401,7 @@ const Chatbot: React.FC = () => {
     
     useEffect(() => {
         if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
         }
         
         if (!spokenWelcome.current && !isMuted) {
@@ -573,15 +420,9 @@ const Chatbot: React.FC = () => {
     }, [stopSpeaking]);
 
     const handleMouseDown = (e: React.MouseEvent<HTMLElement>) => {
-        // Prevent dragging when clicking on any button inside the header
         const target = e.target as Node;
-        // When clicking an icon, the target can be an SVGElement. For text, it's a text node.
-        // This logic ensures we get a valid Element to check for a parent button.
         const element = target.nodeType === Node.TEXT_NODE ? target.parentElement : (target as Element);
-
-        if (element?.closest('button')) {
-            return;
-        }
+        if (element?.closest('button')) return;
         
         setIsDragging(true);
         setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
@@ -612,7 +453,6 @@ const Chatbot: React.FC = () => {
         }
     };
     const statusInfo = getStatusInfo();
-
 
     return (
         <div 

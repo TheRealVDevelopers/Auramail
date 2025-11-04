@@ -67,7 +67,10 @@ const Chatbot: React.FC = () => {
     const [chatbotStatus, setChatbotStatus] = useState<'IDLE' | 'LISTENING' | 'PROCESSING' | 'SPEAKING'>('IDLE');
     const [isMuted, setIsMuted] = useState(false);
     const [shouldRestartListening, setShouldRestartListening] = useState(false);
-    const [needsUserGesture, setNeedsUserGesture] = useState(true); // Start with need for user gesture
+    const [needsUserGesture, setNeedsUserGesture] = useState(false); // Changed to false to remove overlay
+    
+    // Add a ref to track if we've already set up speech recognition grammars
+    const grammarSetupRef = useRef(false);
     
     const [composeState, setComposeState] = useState<{
         active: boolean;
@@ -154,7 +157,9 @@ const Chatbot: React.FC = () => {
                 
                 // Check if specific voices are available
                 const hindiFemaleVoice = responsiveVoices.find((v: any) => v.name === 'Hindi Female');
+                const tamilFemaleVoice = responsiveVoices.find((v: any) => v.name === 'Tamil Female');
                 console.log(`[VOICE] ResponsiveVoice Hindi Female voice available:`, hindiFemaleVoice);
+                console.log(`[VOICE] ResponsiveVoice Tamil Female voice available:`, tamilFemaleVoice);
             } catch (error) {
                 console.error('[VOICE] Error getting ResponsiveVoice voices:', error);
             }
@@ -205,7 +210,7 @@ const Chatbot: React.FC = () => {
 
     const speakText = useCallback((text: string, onComplete?: () => void) => {
         const currentLang = state.currentLanguage;
-        console.log(`[TTS] Using browser TTS for ${currentLang}`);
+        console.log(`[TTS] Using browser TTS for ${currentLang} with text: ${text}`);
         speakWithBrowserTTS(text, currentLang, onComplete);
     }, [state.currentLanguage]);
 
@@ -220,9 +225,17 @@ const Chatbot: React.FC = () => {
         stopSpeaking();
         
         const handleEnd = () => {
-            setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
+            // Play notification sound to indicate end of speaking
             playBeep('end');
-            onComplete?.();
+            
+            // Wait for 1 second before restarting listening
+            setTimeout(() => {
+                setChatbotStatus(isListening ? 'LISTENING' : 'IDLE');
+                onComplete?.();
+                if (!composeStateRef.current.active) {
+                    setShouldRestartListening(true);
+                }
+            }, 1000);
         };
 
         if (isMuted || typeof text !== 'string') {
@@ -237,7 +250,13 @@ const Chatbot: React.FC = () => {
             audioContextRef.current.resume().catch(console.error);
         }
 
-        speakText(textToSpeak, handleEnd);
+        // Play start beep before speaking
+        playBeep('start');
+        
+        // Small delay before speaking to allow beep to play
+        setTimeout(() => {
+            speakText(textToSpeak, handleEnd);
+        }, 200);
 
     }, [isMuted, isListening, playBeep, stopSpeaking, speakText]);
 
@@ -360,6 +379,67 @@ const Chatbot: React.FC = () => {
 
         const lowerText = text.toLowerCase();
         
+        // Personality responses for greetings and common questions
+        let personalityResponse = '';
+        
+        // Greetings
+        if (lowerText.match(/^(hi|hello|hey|hai|ஹாய்|ஹலோ|ஹே|ஹை|नमस्ते|हैलो|हाय|হাই|হ্যালো|হে|হ্যালো)/)) {
+            personalityResponse = state.currentLanguage === 'hi-IN' 
+                ? `नमस्ते! मैं आपका वॉक्समेल सहायक हूँ। मैं आपकी कैसे मदद कर सकता हूँ?`
+                : state.currentLanguage === 'ta-IN'
+                ? `ஹலோ! நான் உங்கள் வாக்ஸ்மெயில் உதவியாளர். நான் உங்களுக்கு எப்படி உதவ முடியும்?`
+                : `Hello! I'm your VoxMail assistant. How can I help you today?`;
+        }
+        // Name inquiries
+        else if (lowerText.match(/(what's your name|what is your name|who are you|உங்கள் பெயர் என்ன|நீங்கள் யார்|आपका नाम क्या है|आप कौन हैं|�पनार নাম কি|�পনি কে)/)) {
+            personalityResponse = state.currentLanguage === 'hi-IN'
+                ? `मेरा नाम वॉक्समेल है। मैं आपका वॉयस-फर्स्ट ईमेल सहायक हूँ।`
+                : state.currentLanguage === 'ta-IN'
+                ? `என் பெயர் வாக்ஸ்மெயில். நான் உங்கள் குரல்-முதல் மின்னஞ்சல் உதவியாளர்.`
+                : `My name is VoxMail. I'm your voice-first email assistant.`;
+        }
+        // Help inquiries
+        else if (lowerText.match(/(how can you help|what can you do|what are you capable of|என்ன செய்ய முடியும்|நீங்கள் என்ன செய்ய முடியும்|आप क्या कर सकते हैं|�পনি কী করতে পারেন)/)) {
+            personalityResponse = state.currentLanguage === 'hi-IN'
+                ? `मैं आपकी मदद कर सकता हूँ: ईमेल पढ़ने, नया ईमेल लिखने, इनबॉक्स, भेजे गए, ड्राफ्ट, स्पैम और कचरा फ़ोल्डर को प्रबंधित करने में। क्या आप कुछ खोलना चाहेंगे?`
+                : state.currentLanguage === 'ta-IN'
+                ? `நான் உங்களுக்கு உதவ முடியும்: மின்னஞ்சல்களைப் படிக்க, புதிய மின்னஞ்சல்களை எழுத, இன்பாக்ஸ், அனுப்பியவை, வரைவுகள், ஸ்பேம் மற்றும் குப்பை கோப்புறைகளை நிர்வகிக்க. ஏதாவது திறக்க விரும்புகிறீர்களா?`
+                : `I can help you: read emails, compose new emails, and manage your inbox, sent, drafts, spam, and trash folders. Would you like to open something?`;
+        }
+        // Thank you responses
+        else if (lowerText.match(/(thank you|thanks|धन्यवाद|நன்றி)/)) {
+            personalityResponse = state.currentLanguage === 'hi-IN'
+                ? `आपका स्वागत है! क्या मैं आपकी और किसी और चीज़ में मदद कर सकता हूँ?`
+                : state.currentLanguage === 'ta-IN'
+                ? `நல்வரவு! நான் உங்களுக்கு வேறு ஏதேனும் உதவ முடியுமா?`
+                : `You're welcome! Can I help you with anything else?`;
+        }
+        // Goodbye responses
+        else if (lowerText.match(/(bye|goodbye|see you|நாளை|bye|अलविदा)/)) {
+            personalityResponse = state.currentLanguage === 'hi-IN'
+                ? `अलविदा! जब भी आपको ईमेल की आवश्यकता हो, मुझे बुलाएं!`
+                : state.currentLanguage === 'ta-IN'
+                ? `பின்னர் சந்திப்போம்! உங்களுக்கு மின்னஞ்சல் தேவைப்படும் போது என்னை அழைக்கவும்!`
+                : `Goodbye! Call me whenever you need email assistance!`;
+        }
+        // How are you responses
+        else if (lowerText.match(/(how are you|how do you do|நீங்கள் எப்படி இருக்கிறீர்கள்|आप कैसे हैं)/)) {
+            personalityResponse = state.currentLanguage === 'hi-IN'
+                ? `मैं बहुत अच्छा हूँ, धन्यवाद! मैं आपकी ईमेल की मदद करने के लिए यहाँ हूँ।`
+                : state.currentLanguage === 'ta-IN'
+                ? `நான் நன்றாக இருக்கிறேன், நன்றி! உங்கள் மின்னஞ்சலுக்கு உதவ நான் இங்கே இருக்கிறேன்.`
+                : `I'm doing great, thank you! I'm here to help with your email.`;
+        }
+        
+        // If we have a personality response, use it and return early
+        if (personalityResponse) {
+            await speak(personalityResponse, () => {
+                setShouldRestartListening(true);
+            });
+            setChatbotStatus('IDLE');
+            return;
+        }
+        
         // Multilingual keyword-based command matching
         let response = '';
         let action: (() => void) | null = null;
@@ -371,7 +451,7 @@ const Chatbot: React.FC = () => {
                 response = t('openingFolderUnreadCount', { folder: t('inbox'), count });
             }
             // Open Sent commands (English, Hindi, Tamil)
-            else if (lowerText.match(/sent|அனுப்பியவை|sent items|அனுப்பப்பட்டது/)) {
+            else if (lowerText.match(/sent|அனுப்பியவை|sent items|அனுப்பப்ட்டது/)) {
                 dispatch({ type: 'SELECT_FOLDER', payload: Folder.SENT });
                 const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, Folder.SENT) : 0;
                 response = t('openingFolderUnreadCount', { folder: t('sent'), count });
@@ -400,7 +480,7 @@ const Chatbot: React.FC = () => {
                 response = t('composeRecipientPrompt');
             }
             // Read first email (English, Hindi, Tamil)
-            else if (lowerText.match(/read|open|पढ़ो|खोलो|ಓದಿ|�ೆರೆಯಿರಿ/) && lowerText.match(/first|1st|one|1|पहला|पहली|ಮೊದಲ/)) {
+            else if (lowerText.match(/read|open|படி|திற/)) {
                 if (state.emails.length >= 1) {
                     const email = state.emails[0];
                     dispatch({ type: 'SELECT_EMAIL', payload: email.id });
@@ -414,7 +494,7 @@ const Chatbot: React.FC = () => {
                 }
             }
             // Read second email (English, Hindi, Tamil)
-            else if (lowerText.match(/read|open|पढ़ो|खोलो|ಓದಿ|�ೆರೆಯಿರಿ/) && lowerText.match(/second|2nd|two|2|दूसरा|दूसरी|ಎರಡನೇ/)) {
+            else if (lowerText.match(/read|open|படி|திற/) && lowerText.match(/second|2nd|two|2|இரண்டாவது/)) {
                 if (state.emails.length >= 2) {
                     const email = state.emails[1];
                     dispatch({ type: 'SELECT_EMAIL', payload: email.id });
@@ -428,7 +508,7 @@ const Chatbot: React.FC = () => {
                 }
             }
             // Read third email (English, Hindi, Tamil)
-            else if (lowerText.match(/read|open|पढ़ो|खोलो|ಓದಿ|�ೆರೆಯಿರಿ/) && lowerText.match(/third|3rd|three|3|तीसरा|तीसरी|ಮೂರನೇ/)) {
+            else if (lowerText.match(/read|open|படி|திற/) && lowerText.match(/third|3rd|three|3|மூன்றாவது/)) {
                 if (state.emails.length >= 3) {
                     const email = state.emails[2];
                     dispatch({ type: 'SELECT_EMAIL', payload: email.id });
@@ -442,7 +522,7 @@ const Chatbot: React.FC = () => {
                 }
             }
             // Delete email commands (English, Hindi, Tamil)
-            else if (lowerText.match(/delete|remove|हटाओ|मिटाओ|ಅಳಿಸಿ|நீக்கு/) && state.selectedEmail) {
+            else if (lowerText.match(/delete|remove|நீக்கு/) && state.selectedEmail) {
                 if (state.userProfile) {
                     await updateEmailFolder(state.userProfile.uid, state.selectedEmail.id, Folder.TRASH);
                     dispatch({ type: 'DELETE_EMAIL', payload: state.selectedEmail.id });
@@ -453,7 +533,7 @@ const Chatbot: React.FC = () => {
                 }
             }
             // Mark as spam commands (English, Hindi, Tamil)
-            else if (lowerText.match(/spam|junk|स्पैम|ಸ್ಪ್ಯಾಮ್/) && state.selectedEmail && !lowerText.match(/open|folder/)) {
+            else if (lowerText.match(/spam|junk|ஸ்பேம்/) && state.selectedEmail && !lowerText.match(/open|folder/)) {
                 if (state.userProfile) {
                     await updateEmailFolder(state.userProfile.uid, state.selectedEmail.id, Folder.SPAM);
                     dispatch({ type: 'MOVE_TO_SPAM', payload: state.selectedEmail.id });
@@ -464,17 +544,17 @@ const Chatbot: React.FC = () => {
                 }
             }
             // Logout commands (English, Hindi, Tamil)
-            else if (lowerText.match(/logout|log out|sign out|बाहर निकलो|लॉग आउट|ಲಾಗ್ ಔಟ್|ಸೈನ್ ಔಟ್/)) {
+            else if (lowerText.match(/logout|log out|sign out|வெளியேறு/)) {
                 response = t('signingOut');
                 setTimeout(() => auth.signOut(), 1000);
             }
             // Change to English (any language)
-            else if (lowerText.match(/english|अंग्रेजी|ಇಂಗ್ಲಿಷ್/)) {
+            else if (lowerText.match(/english|அங்கிலம்/)) {
                 dispatch({ type: 'SET_LANGUAGE', payload: 'en-US' });
                 response = 'Language switched to English.';
             }
             // Change to Hindi (any language)
-            else if (lowerText.match(/hindi|हिन्दी|हिंदी|ಹಿಂದಿ/)) {
+            else if (lowerText.match(/hindi|हिन्दी|हिंदी/)) {
                 dispatch({ type: 'SET_LANGUAGE', payload: 'hi-IN' });
                 response = 'भाषा हिन्दी में बदल दी गई है।';
             }
@@ -488,12 +568,12 @@ const Chatbot: React.FC = () => {
                 dispatch({ type: 'SET_LANGUAGE', payload: 'ta-IN' });
                 response = 'மொழி தமிழுக்கு மாற்றப்பட்டது.';
             }
-            // Help command (English, Hindi, Kannada)
-            else if (lowerText.match(/help|what can|commands|मदद|सहायता|ಸಹಾಯ/)) {
+            // Help command (English, Hindi, Tamil)
+            else if (lowerText.match(/help|what can|commands|உதவி/)) {
                 response = t('welcomeMessage');
             }
-            // Stop reading commands (English, Hindi, Kannada)
-            else if (lowerText.match(/stop|चुप|ನಿಲ್ಲಿಸು/)) {
+            // Stop reading commands (English, Hindi, Tamil)
+            else if (lowerText.match(/stop|நிறுத்து/)) {
                 stopSpeaking();
                 setChatbotStatus('IDLE');
                 response = t('stopped');
@@ -537,6 +617,11 @@ const Chatbot: React.FC = () => {
         // Prevent multiple calls
         if (!needsUserGesture) {
             console.log('[ENABLE] Already enabled, ignoring');
+            // If already enabled, just speak the welcome message
+            const welcomeMsg = t('welcomeMessage');
+            speak(welcomeMsg, () => {
+                setShouldRestartListening(true);
+            });
             return;
         }
         
@@ -576,6 +661,10 @@ const Chatbot: React.FC = () => {
             utterance.rate = 0.9;
             utterance.pitch = 1.0;
             
+            // Set language for the welcome message
+            utterance.lang = state.currentLanguage;
+            console.log(`[ENABLE] Setting welcome message language to: ${state.currentLanguage}`);
+            
             utterance.onstart = () => {
                 console.log('[ENABLE] Speech started');
                 setChatbotStatus('SPEAKING');
@@ -600,11 +689,11 @@ const Chatbot: React.FC = () => {
                     oscillator.stop(context.currentTime + 0.2);
                 }
                 
-                // Start listening after beep
+                // Start listening after beep and 1 second delay
                 setTimeout(() => {
                     console.log('[ENABLE] Starting voice recording');
                     setShouldRestartListening(true);
-                }, 400);
+                }, 1000);
             };
             
             utterance.onerror = (event) => {
@@ -613,7 +702,7 @@ const Chatbot: React.FC = () => {
                 // Still try to start listening
                 setTimeout(() => {
                     setShouldRestartListening(true);
-                }, 400);
+                }, 1000);
             };
 
             console.log('[ENABLE] Calling speechSynthesis.speak()');
@@ -623,9 +712,9 @@ const Chatbot: React.FC = () => {
             // Fallback: just start listening
             setTimeout(() => {
                 setShouldRestartListening(true);
-            }, 400);
+            }, 1000);
         }
-    }, [t, needsUserGesture, logVoiceDiagnostics]); // Add logVoiceDiagnostics as dependency
+    }, [t, needsUserGesture, logVoiceDiagnostics, state.currentLanguage, speak]); // Add state.currentLanguage as dependency
     
     const toggleListening = useCallback(() => {
         if (isListening) {
@@ -644,6 +733,7 @@ const Chatbot: React.FC = () => {
             const recognition = recognitionRef.current;
             recognition.continuous = false;
             recognition.interimResults = true;
+            recognition.maxAlternatives = 1;
 
             recognition.onresult = (event) => {
                 let interim = '';
@@ -665,6 +755,10 @@ const Chatbot: React.FC = () => {
                 if(event.error !== 'no-speech') {
                     speak("Sorry, there was a recognition error.");
                 }
+                // Restart listening after error
+                setTimeout(() => {
+                    setShouldRestartListening(true);
+                }, 1000);
             };
             recognition.onstart = () => {
                 setIsListening(true);
@@ -673,10 +767,15 @@ const Chatbot: React.FC = () => {
             recognition.onend = () => {
                 setIsListening(false);
                 setChatbotStatus('IDLE');
+                // Automatically restart listening when it ends
+                if (!composeStateRef.current.active) {
+                    setShouldRestartListening(true);
+                }
             };
         }
 
         recognitionRef.current.lang = state.currentLanguage;
+        console.log(`[STT] Setting recognition language to: ${state.currentLanguage}`);
         recognitionRef.current.start();
 
     }, [isListening, state.currentLanguage, speak, processTranscript]);
@@ -705,6 +804,11 @@ const Chatbot: React.FC = () => {
                 timestamp: Date.now() 
             }]);
             
+            // Automatically speak the welcome message
+            setTimeout(() => {
+                handleEnableVoice();
+            }, 500);
+            
             // Log voice diagnostics on initialization
             logVoiceDiagnostics();
         }
@@ -728,7 +832,7 @@ const Chatbot: React.FC = () => {
             // Small delay before restarting to ensure clean state
             const timer = setTimeout(() => {
                 toggleListening();
-            }, 300);
+            }, 500);
             return () => clearTimeout(timer);
         }
     }, [shouldRestartListening, isListening, toggleListening]);
@@ -766,7 +870,7 @@ const Chatbot: React.FC = () => {
 
     return (
         <div 
-            className="fixed flex flex-col bg-white rounded-lg shadow-2xl border border-gray-200" 
+            className="fixed flex flex-col bg-white rounded-xl shadow-2xl border-2 border-blue-500" 
             style={{ left: position.x, top: position.y, width: '400px', height: '500px' }}
             onClick={(e) => {
                 // If user needs to enable voice and clicks anywhere (except draggable header), enable it
@@ -777,72 +881,56 @@ const Chatbot: React.FC = () => {
             }}
         >
             <header 
-                className="flex items-center justify-between p-3 bg-gray-100 rounded-t-lg border-b border-gray-200 cursor-move"
+                className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-t-xl border-b border-blue-300 cursor-move"
                 onMouseDown={handleMouseDown}
             >
                 <div className="flex items-center space-x-2">
                     {statusInfo.icon}
                     <div>
-                        <h2 className="text-sm font-semibold text-gray-800">VoxMail Assistant</h2>
-                        <p className="text-xs text-gray-500">{composeState.active ? `Composing: ${composeState.step}` : statusInfo.text}</p>
+                        <h2 className="text-sm font-bold text-white">VoxMail Assistant</h2>
+                        <p className="text-xs text-blue-100">{composeState.active ? `Composing: ${composeState.step}` : statusInfo.text}</p>
                     </div>
                 </div>
                 <div className="flex items-center space-x-2">
-                    <button onClick={() => setIsMuted(prev => !prev)} className="p-1 rounded-full hover:bg-gray-200" title={isMuted ? 'Unmute' : 'Mute'}>
-                        {isMuted ? <SpeakerOffIcon className="w-5 h-5 text-gray-700" /> : <SpeakerIcon className="w-5 h-5 text-gray-700" />}
+                    <button onClick={() => setIsMuted(prev => !prev)} className="p-2 rounded-full hover:bg-blue-400 bg-blue-600 text-white transition-colors" title={isMuted ? 'Unmute' : 'Mute'}>
+                        {isMuted ? <SpeakerOffIcon className="w-5 h-5" /> : <SpeakerIcon className="w-5 h-5" />}
                     </button>
-                    <button onClick={toggleListening} className="p-1 rounded-full hover:bg-gray-200" title={isListening ? 'Stop Listening' : 'Start Listening'}>
-                        {isListening ? <PauseIcon className="w-5 h-5 text-red-500" /> : <MicIcon className="w-5 h-5 text-gray-700" />}
+                    <button onClick={toggleListening} className={`p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'} text-white`} title={isListening ? 'Stop Listening' : 'Start Listening'}>
+                        {isListening ? <PauseIcon className="w-5 h-5" /> : <MicIcon className="w-5 h-5" />}
                     </button>
-                    <button onClick={() => dispatch({ type: 'TOGGLE_CHATBOT' })} className="p-1 rounded-full hover:bg-gray-200 text-gray-700 font-bold text-lg" title="Close">
+                    <button onClick={() => dispatch({ type: 'TOGGLE_CHATBOT' })} className="p-2 rounded-full hover:bg-blue-400 bg-blue-600 text-white font-bold text-lg transition-colors" title="Close">
                         ×
                     </button>
                 </div>
             </header>
-            <div className="flex-1 p-4 overflow-y-auto bg-gray-50 relative">
-                {/* Show enable voice overlay if user gesture is needed */}
-                {needsUserGesture && (
-                    <div className="absolute inset-0 bg-blue-50 bg-opacity-95 flex items-center justify-center z-10 cursor-pointer"
-                         onClick={handleEnableVoice}>
-                        <div className="text-center p-6">
-                            <div className="mb-4">
-                                <SpeakerIcon className="w-16 h-16 mx-auto text-blue-600 animate-pulse" />
-                            </div>
-                            <h3 className="text-lg font-bold text-gray-800 mb-2">🎤 Voice Assistant Ready</h3>
-                            <p className="text-sm text-gray-600 mb-4">Click anywhere to start</p>
-                            <div className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg shadow-lg animate-bounce">
-                                Click to Enable
-                            </div>
-                        </div>
-                    </div>
-                )}
+            <div className="flex-1 p-4 overflow-y-auto bg-gradient-to-b from-blue-50 to-indigo-50 relative rounded-b-lg">
                 {transcript.map((item) => (
-                    <div key={item.id} className={`my-2 flex ${item.isUser ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`px-4 py-2 rounded-lg max-w-xs text-sm ${item.isUser ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                    <div key={item.id} className={`my-3 flex ${item.isUser ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`px-4 py-3 rounded-2xl max-w-xs text-sm shadow-md ${item.isUser ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-br-none' : 'bg-white text-gray-800 border border-blue-200 rounded-bl-none'}`}>
                             {item.text}
                         </div>
                     </div>
                 ))}
                 {liveTranscript && (
-                    <div className="my-2 flex justify-end">
-                        <div className={`px-4 py-2 rounded-lg max-w-xs text-sm bg-blue-300 text-white opacity-90`}>
+                    <div className="my-3 flex justify-end">
+                        <div className={`px-4 py-3 rounded-2xl max-w-xs text-sm bg-gradient-to-r from-blue-400 to-indigo-400 text-white opacity-90 rounded-br-none shadow-md`}>
                             {liveTranscript}
                         </div>
                     </div>
                 )}
                 <div ref={transcriptEndRef} />
             </div>
-            <form onSubmit={handleTextSubmit} id="chatbot-form" className="p-3 border-t border-gray-200 bg-white rounded-b-lg">
+            <form onSubmit={handleTextSubmit} id="chatbot-form" className="p-3 border-t border-blue-200 bg-white rounded-b-xl">
                 <div className="flex items-center space-x-2">
                     <input
                         type="text"
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
                         placeholder={isListening ? 'Listening...' : 'Type a message or command...'}
-                        className="flex-1 w-full bg-gray-100 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="flex-1 w-full bg-blue-50 border-2 border-blue-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 rounded-full"
                         disabled={isListening}
                     />
-                    <button type="submit" className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300">
+                    <button type="submit" className="p-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full hover:from-blue-600 hover:to-indigo-600 shadow-md transition-all">
                         <PaperAirplaneIcon className="w-5 h-5" />
                     </button>
                 </div>

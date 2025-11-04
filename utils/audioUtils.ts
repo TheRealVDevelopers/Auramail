@@ -1,2 +1,59 @@
 // This file is reserved for audio utility functions.
-// Previous functions for decoding Gemini TTS audio were removed as they are no longer needed.
+
+// A variable to hold the voices once they are loaded.
+let voices: SpeechSynthesisVoice[] = [];
+
+// A promise that resolves when the voices are loaded.
+const voicesPromise = new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    if (voices.length > 0) {
+        return resolve(voices);
+    }
+    speechSynthesis.onvoiceschanged = () => {
+        voices = speechSynthesis.getVoices();
+        resolve(voices);
+    };
+    // In some browsers, onvoiceschanged is not fired, so we check manually.
+    voices = speechSynthesis.getVoices();
+    if (voices.length > 0) {
+        resolve(voices);
+    }
+});
+
+export const speakWithBrowserTTS = async (text: string, lang: string, onComplete?: () => void) => {
+    if (!('speechSynthesis' in window)) {
+        console.error('[TTS] Browser speechSynthesis not supported.');
+        onComplete?.();
+        return;
+    }
+
+    const availableVoices = await voicesPromise;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    // Find a suitable voice
+    let selectedVoice = availableVoices.find(v => v.lang === lang && v.name.includes('Google'));
+    if (!selectedVoice) {
+        selectedVoice = availableVoices.find(v => v.lang === lang);
+    }
+    
+    if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        console.log(`[TTS] Using voice: ${selectedVoice.name}`);
+    } else {
+        console.warn(`[TTS] No voice found for lang: ${lang}. Using browser default.`);
+    }
+
+    utterance.onend = () => {
+        onComplete?.();
+    };
+
+    utterance.onerror = (event) => {
+        console.error('[TTS] SpeechSynthesisUtterance error:', event);
+        onComplete?.();
+    };
+
+    speechSynthesis.speak(utterance);
+};

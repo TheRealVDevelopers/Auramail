@@ -3,7 +3,7 @@ import { Folder, Email, Language } from './types';
 export const SUPPORTED_LANGUAGES: Language[] = [
     { name: 'English (US)', code: 'en-US' },
     { name: 'Hindi', code: 'hi-IN' },
-    { name: 'Kannada', code: 'kn-IN' },
+    { name: 'Tamil', code: 'ta-IN' },
 ];
 
 export const INITIAL_SYSTEM_PROMPT = (currentFolder: Folder, emails: Email[], selectedEmail: Email | null, languageName: string) => {

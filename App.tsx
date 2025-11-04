@@ -15,6 +15,17 @@ const App: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const t = useTranslations();
 
+  useEffect(() => {
+    // Pass the Gemini API key to the window object
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      (window as any).__GEMINI_API_KEY__ = apiKey;
+      console.log('[App] Gemini API Key set on window object.');
+    } else {
+      console.warn('[App] Gemini API Key not found in process.env.');
+    }
+  }, []);
+
   // Auto-open chatbot when user logs in
   useEffect(() => {
     if (state.isAuthenticated && !state.loading && !state.isChatbotOpen) {

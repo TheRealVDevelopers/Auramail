@@ -99,19 +99,19 @@ const Chatbot: React.FC = () => {
             
             // Check for specific language voices
             const hindiVoices = voices.filter(v => v.lang === 'hi-IN');
-            const kannadaVoices = voices.filter(v => v.lang === 'kn-IN');
+            const tamilVoices = voices.filter(v => v.lang === 'ta-IN');
             const englishVoices = voices.filter(v => v.lang.startsWith('en-'));
             
             console.log(`[VOICE] Hindi voices: ${hindiVoices.length}`, hindiVoices.map(v => v.name));
-            console.log(`[VOICE] Kannada voices: ${kannadaVoices.length}`, kannadaVoices.map(v => v.name));
+            console.log(`[VOICE] Tamil voices: ${tamilVoices.length}`, tamilVoices.map(v => v.name));
             console.log(`[VOICE] English voices: ${englishVoices.length}`, englishVoices.slice(0, 3).map(v => v.name));
             
             // Check for Google voices specifically
             const googleHindiVoices = voices.filter(v => v.lang === 'hi-IN' && v.name.includes('Google'));
-            const googleKannadaVoices = voices.filter(v => v.lang === 'kn-IN' && v.name.includes('Google'));
+            const googleTamilVoices = voices.filter(v => v.lang === 'ta-IN' && v.name.includes('Google'));
             
             console.log(`[VOICE] Google Hindi voices: ${googleHindiVoices.length}`, googleHindiVoices.map(v => v.name));
-            console.log(`[VOICE] Google Kannada voices: ${googleKannadaVoices.length}`, googleKannadaVoices.map(v => v.name));
+            console.log(`[VOICE] Google Tamil voices: ${googleTamilVoices.length}`, googleTamilVoices.map(v => v.name));
             
             // If no voices are found, listen for the voiceschanged event
             if (voices.length === 0) {
@@ -122,10 +122,10 @@ const Chatbot: React.FC = () => {
                     console.log(`[VOICE] Now available browser voices: ${newVoices.length}`);
                     
                     const newHindiVoices = newVoices.filter(v => v.lang === 'hi-IN');
-                    const newKannadaVoices = newVoices.filter(v => v.lang === 'kn-IN');
+                    const newTamilVoices = newVoices.filter(v => v.lang === 'ta-IN');
                     
                     console.log(`[VOICE] Now Hindi voices: ${newHindiVoices.length}`, newHindiVoices.map(v => v.name));
-                    console.log(`[VOICE] Now Kannada voices: ${newKannadaVoices.length}`, newKannadaVoices.map(v => v.name));
+                    console.log(`[VOICE] Now Tamil voices: ${newTamilVoices.length}`, newTamilVoices.map(v => v.name));
                     
                     // Remove the event listener
                     speechSynthesis.removeEventListener('voiceschanged', voicesChangedHandler);
@@ -205,51 +205,8 @@ const Chatbot: React.FC = () => {
 
     const speakText = useCallback((text: string, onComplete?: () => void) => {
         const currentLang = state.currentLanguage;
-
-        if (currentLang === 'kn-IN') {
-            console.log('[TTS] Using Google Cloud TTS for Kannada');
-            const apiKey = (window as any).__GEMINI_API_KEY__;
-            if (!apiKey) {
-                console.error('[TTS] Google API Key not found for TTS. Please set window.__GEMINI_API_KEY__');
-                speakWithBrowserTTS(text, currentLang, onComplete); // Fallback
-                return;
-            }
-
-            fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    input: { text },
-                    voice: { languageCode: 'kn-IN', name: 'kn-IN-Standard-A', ssmlGender: 'FEMALE' },
-                    audioConfig: { audioEncoding: 'MP3', pitch: 0, speakingRate: 1.0 }
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.audioContent) {
-                    const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
-                    audio.onended = () => {
-                        console.log('[TTS] Google Cloud TTS ended.');
-                        onComplete?.();
-                    };
-                    audio.onerror = (e) => {
-                        console.error('[TTS] Google Cloud audio playback error:', e);
-                        speakWithBrowserTTS(text, currentLang, onComplete); // Fallback
-                    };
-                    audio.play().catch(console.error);
-                } else {
-                    console.error('[TTS] Google Cloud TTS failed, falling back.', data);
-                    speakWithBrowserTTS(text, currentLang, onComplete);
-                }
-            })
-            .catch(error => {
-                console.error('[TTS] Google Cloud TTS fetch error:', error);
-                speakWithBrowserTTS(text, currentLang, onComplete);
-            });
-        } else {
-            console.log(`[TTS] Using browser TTS for ${currentLang}`);
-            speakWithBrowserTTS(text, currentLang, onComplete);
-        }
+        console.log(`[TTS] Using browser TTS for ${currentLang}`);
+        speakWithBrowserTTS(text, currentLang, onComplete);
     }, [state.currentLanguage]);
 
     const speak = useCallback(async (text: string | React.ReactNode, onComplete?: () => void, skipTranscript = false) => {
@@ -407,42 +364,42 @@ const Chatbot: React.FC = () => {
         let response = '';
         let action: (() => void) | null = null;
         
-        // Open Inbox commands (English, Hindi, Kannada)
-        if (lowerText.match(/inbox|इनबॉक्स|ಇನ್‌ಬಾಕ್ಸ್/)) {
+        // Open Inbox commands (English, Hindi, Tamil)
+        if (lowerText.match(/inbox|இன்பாக்ஸ்/)) {
                 dispatch({ type: 'SELECT_FOLDER', payload: Folder.INBOX });
                 const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, Folder.INBOX) : 0;
                 response = t('openingFolderUnreadCount', { folder: t('inbox'), count });
             }
-            // Open Sent commands (English, Hindi, Kannada)
-            else if (lowerText.match(/sent|भेजा|sent items|भेजे गए|ಕಳುಹಿಸಲಾಗಿದೆ/)) {
+            // Open Sent commands (English, Hindi, Tamil)
+            else if (lowerText.match(/sent|அனுப்பியவை|sent items|அனுப்பப்பட்டது/)) {
                 dispatch({ type: 'SELECT_FOLDER', payload: Folder.SENT });
                 const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, Folder.SENT) : 0;
                 response = t('openingFolderUnreadCount', { folder: t('sent'), count });
             }
-            // Open Drafts commands (English, Hindi, Kannada)
-            else if (lowerText.match(/draft|ड्राफ्ट|ಡ್ರಾಫ್ಟ್/)) {
+            // Open Drafts commands (English, Hindi, Tamil)
+            else if (lowerText.match(/draft|வரைவு/)) {
                 dispatch({ type: 'SELECT_FOLDER', payload: Folder.DRAFTS });
                 const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, Folder.DRAFTS) : 0;
                 response = t('openingFolderUnreadCount', { folder: t('drafts'), count });
             }
-            // Open Spam commands (English, Hindi, Kannada)
-            else if (lowerText.match(/spam|junk|स्पैम|ಸ್ಪ್ಯಾಮ್/)) {
+            // Open Spam commands (English, Hindi, Tamil)
+            else if (lowerText.match(/spam|ஸ்பேம்/)) {
                 dispatch({ type: 'SELECT_FOLDER', payload: Folder.SPAM });
                 const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, Folder.SPAM) : 0;
                 response = t('openingFolderUnreadCount', { folder: t('spam'), count });
             }
-            // Open Trash commands (English, Hindi, Kannada)
-            else if (lowerText.match(/trash|bin|कचरा|ಕಸದ/)) {
+            // Open Trash commands (English, Hindi, Tamil)
+            else if (lowerText.match(/trash|குப்பை/)) {
                 dispatch({ type: 'SELECT_FOLDER', payload: Folder.TRASH });
                 const count = state.userProfile ? await getUnreadCount(state.userProfile.uid, Folder.TRASH) : 0;
                 response = t('openingFolderUnreadCount', { folder: t('trash'), count });
             }
-            // Compose email commands (English, Hindi, Kannada)
-            else if (lowerText.match(/compose|new email|write|send|नया ईमेल|लिखो|भेजो|ಹೊಸ ಇಮೇಲ್|ಬರೆಯಿರಿ|ಕಳುಹಿಸಿ/)) {
+            // Compose email commands (English, Hindi, Tamil)
+            else if (lowerText.match(/compose|புதிய மின்னஞ்சல்|எழுது|அனுப்பு/)) {
                 setComposeState({ active: true, step: 'recipient', draft: {}, fieldToChange: '' });
                 response = t('composeRecipientPrompt');
             }
-            // Read first email (English, Hindi, Kannada)
+            // Read first email (English, Hindi, Tamil)
             else if (lowerText.match(/read|open|पढ़ो|खोलो|ಓದಿ|�ೆರೆಯಿರಿ/) && lowerText.match(/first|1st|one|1|पहला|पहली|ಮೊದಲ/)) {
                 if (state.emails.length >= 1) {
                     const email = state.emails[0];
@@ -456,7 +413,7 @@ const Chatbot: React.FC = () => {
                     response = t('emailNotFoundAtIndex', { index: 1 });
                 }
             }
-            // Read second email (English, Hindi, Kannada)
+            // Read second email (English, Hindi, Tamil)
             else if (lowerText.match(/read|open|पढ़ो|खोलो|ಓದಿ|�ೆರೆಯಿರಿ/) && lowerText.match(/second|2nd|two|2|दूसरा|दूसरी|ಎರಡನೇ/)) {
                 if (state.emails.length >= 2) {
                     const email = state.emails[1];
@@ -470,7 +427,7 @@ const Chatbot: React.FC = () => {
                     response = t('emailNotFoundAtIndex', { index: 2 });
                 }
             }
-            // Read third email (English, Hindi, Kannada)
+            // Read third email (English, Hindi, Tamil)
             else if (lowerText.match(/read|open|पढ़ो|खोलो|ಓದಿ|�ೆರೆಯಿರಿ/) && lowerText.match(/third|3rd|three|3|तीसरा|तीसरी|ಮೂರನೇ/)) {
                 if (state.emails.length >= 3) {
                     const email = state.emails[2];
@@ -484,27 +441,29 @@ const Chatbot: React.FC = () => {
                     response = t('emailNotFoundAtIndex', { index: 3 });
                 }
             }
-            // Delete email commands (English, Hindi, Kannada)
-            else if (lowerText.match(/delete|remove|हटाओ|मिटाओ|ಅಳಿಸಿ/) && state.selectedEmail) {
+            // Delete email commands (English, Hindi, Tamil)
+            else if (lowerText.match(/delete|remove|हटाओ|मिटाओ|ಅಳಿಸಿ|நீக்கு/) && state.selectedEmail) {
                 if (state.userProfile) {
                     await updateEmailFolder(state.userProfile.uid, state.selectedEmail.id, Folder.TRASH);
                     dispatch({ type: 'DELETE_EMAIL', payload: state.selectedEmail.id });
-                    response = state.currentLanguage === 'hi-IN' ? 'ईमेल कचरे में भेज दिया गया।' : 
-                               state.currentLanguage === 'kn-IN' ? 'ಇಮೇಲ್ ಅನ್ನು ಕಸದ ಬುಟ್ಟಿಗೆ ಸರಿಸಲಾಗಿದೆ.' : 
+                    response = state.currentLanguage === 'hi-IN' ? 'ईमेल कचरे में भेज दिया गया।' :
+                               state.currentLanguage === 'ta-IN' ? 'மின்னஞ்சல் குப்பைக்கு நகர்த்தப்பட்டது.' :
+                               state.currentLanguage === 'kn-IN' ? 'ಇಮೇಲ್ ಅನ್ನು ಕಸದ ಬುಟ್ಟಿಗೆ ಸರಿಸಲಾಗಿದೆ.' :
                                'Email moved to trash.';
                 }
             }
-            // Mark as spam commands (English, Hindi, Kannada)
+            // Mark as spam commands (English, Hindi, Tamil)
             else if (lowerText.match(/spam|junk|स्पैम|ಸ್ಪ್ಯಾಮ್/) && state.selectedEmail && !lowerText.match(/open|folder/)) {
                 if (state.userProfile) {
                     await updateEmailFolder(state.userProfile.uid, state.selectedEmail.id, Folder.SPAM);
                     dispatch({ type: 'MOVE_TO_SPAM', payload: state.selectedEmail.id });
-                    response = state.currentLanguage === 'hi-IN' ? 'ईमेल को स्पैम चिह्नित किया गया।' : 
-                               state.currentLanguage === 'kn-IN' ? 'ಇಮೇಲ್ ಅನ್ನು ಸ್ಪ್ಯಾಮ್ ಎಂದು ಗುರುತಿಸಲಾಗಿದೆ.' : 
+                    response = state.currentLanguage === 'hi-IN' ? 'ईमेल को स्पैम चिह्नित किया गया।' :
+                               state.currentLanguage === 'ta-IN' ? 'மின்னஞ்சல் ஸ்பேம் எனக் குறிக்கப்பட்டது.' :
+                               state.currentLanguage === 'kn-IN' ? 'ಇಮೇಲ್ ಅನ್ನು ಸ್ಪ್ಯಾಮ್ ಎಂದು ಗುರುತಿಸಲಾಗಿದೆ.' :
                                'Email marked as spam.';
                 }
             }
-            // Logout commands (English, Hindi, Kannada)
+            // Logout commands (English, Hindi, Tamil)
             else if (lowerText.match(/logout|log out|sign out|बाहर निकलो|लॉग आउट|ಲಾಗ್ ಔಟ್|ಸೈನ್ ಔಟ್/)) {
                 response = t('signingOut');
                 setTimeout(() => auth.signOut(), 1000);
@@ -524,6 +483,11 @@ const Chatbot: React.FC = () => {
                 dispatch({ type: 'SET_LANGUAGE', payload: 'kn-IN' });
                 response = 'ಭಾಷೆಯನ್ನು ಕನ್ನಡಕ್ಕೆ ಬದಲಾಯಿಸಲಾಗಿದೆ.';
             }
+            // Change to Tamil (any language)
+            else if (lowerText.match(/tamil|தமிழ்/)) {
+                dispatch({ type: 'SET_LANGUAGE', payload: 'ta-IN' });
+                response = 'மொழி தமிழுக்கு மாற்றப்பட்டது.';
+            }
             // Help command (English, Hindi, Kannada)
             else if (lowerText.match(/help|what can|commands|मदद|सहायता|ಸಹಾಯ/)) {
                 response = t('welcomeMessage');
@@ -538,6 +502,8 @@ const Chatbot: React.FC = () => {
             else {
                 if (state.currentLanguage === 'hi-IN') {
                     response = "मुझे समझ नहीं आया। कृपया 'इनबॉक्स खोलो', 'पहला ईमेल पढ़ो', 'नया ईमेल लिखो', या 'मदद' कहें।";
+                } else if (state.currentLanguage === 'ta-IN') {
+                    response = "எனக்கு புரியவில்லை. 'இன்பாக்ஸ் திற', 'முதல் மின்னஞ்சலைப் படி', 'புதிய மின்னஞ்சல் எழுது', அல்லது 'உதவி' என்று சொல்லவும்.";
                 } else if (state.currentLanguage === 'kn-IN') {
                     response = "ನನಗೆ ಅರ್ಥವಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು 'ಇನ್‌ಬಾಕ್ಸ್ ತೆರೆಯಿರಿ', 'ಮೊದಲ ಇಮೇಲ್ ಓದಿ', 'ಹೊಸ ಇಮೇಲ್ ಬರೆಯಿರಿ', ಅಥವಾ 'ಸಹಾಯ' ಎಂದು ಹೇಳಿ.";
                 } else {

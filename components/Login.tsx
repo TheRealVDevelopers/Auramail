@@ -30,148 +30,321 @@ declare global {
     }
 }
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+// Speech Recognition type definitions
+interface SpeechRecognition extends EventTarget {
+    continuous: boolean;
+    grammars: any;
+    lang: string;
+    interimResults: boolean;
+    maxAlternatives: number;
+    onaudioend: ((ev: Event) => any) | null;
+    onaudiostart: ((ev: Event) => any) | null;
+    onend: ((ev: Event) => any) | null;
+    onerror: ((ev: any) => any) | null;
+    onnomatch: ((ev: any) => any) | null;
+    onresult: ((ev: any) => any) | null;
+    onsoundend: ((ev: Event) => any) | null;
+    onsoundstart: ((ev: Event) => any) | null;
+    onspeechend: ((ev: Event) => any) | null;
+    onspeechstart: ((ev: Event) => any) | null;
+    onstart: ((ev: Event) => any) | null;
+    serviceURI: string;
+    abort(): void;
+    start(): void;
+    stop(): void;
+}
+
+declare global {
+    interface Window {
+        SpeechRecognition: new () => SpeechRecognition;
+        webkitSpeechRecognition: new () => SpeechRecognition;
+    }
+}
+
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { setupNewUser } from '../services/emailService';
-import { LogoEnvelopeIcon, MicIcon, UserIcon, LockIcon } from './icons/IconComponents';
-import { useAppContext } from '../context/AppContext';
+import { LogoEnvelopeIcon, UserIcon, LockIcon, MicIcon } from './icons/IconComponents';
 import { useTranslations } from '../utils/translations';
 
 const Login: React.FC = () => {
-    const { state } = useAppContext();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const [isVoiceLoginActive, setIsVoiceLoginActive] = useState(false);
-    const [voiceStep, setVoiceStep] = useState<'idle' | 'action' | 'username' | 'email' | 'password' | 'confirm'>('idle');
+    // Voice authentication states
+    const [isVoiceMode, setIsVoiceMode] = useState(false);
+    const [voiceStep, setVoiceStep] = useState<'initial' | 'choice' | 'username' | 'password' | 'confirm'>('initial');
     const [voiceFeedback, setVoiceFeedback] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [transcribedText, setTranscribedText] = useState('');
+    const [needsUserGesture, setNeedsUserGesture] = useState(true);
 
+    // Refs
     const recognitionRef = useRef<SpeechRecognition | null>(null);
-    const audioContextRef = useRef<AudioContext | null>(null);
+    const hasSpokenWelcomeRef = useRef(false);
     const voiceStepRef = useRef(voiceStep);
-    useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
     const isRegisteringRef = useRef(isRegistering);
-    useEffect(() => { isRegisteringRef.current = isRegistering; }, [isRegistering]);
-    const handleVoiceInputRef = useRef<(text: string) => void>(() => {});
+    const usernameRef = useRef('');
+    const passwordRef = useRef('');
 
     const t = useTranslations();
 
-    const playBeep = useCallback((freq = 880) => {
-        if (!audioContextRef.current) return;
-        const context = audioContextRef.current;
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.frequency.value = freq;
-        gain.gain.setValueAtTime(0, context.currentTime);
-        gain.gain.linearRampToValueAtTime(0.3, context.currentTime + 0.05);
-        gain.gain.linearRampToValueAtTime(0, context.currentTime + 0.15);
-        oscillator.start();
-        oscillator.stop(context.currentTime + 0.2);
+    // Keep refs in sync
+    useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
+    useEffect(() => { isRegisteringRef.current = isRegistering; }, [isRegistering]);
+
+    // Voice helper functions
+    const speak = useCallback((text: string, onComplete?: () => void) => {
+        return new Promise<void>((resolve) => {
+            if (!('speechSynthesis' in window)) {
+                console.error("Browser does not support Speech Synthesis.");
+                onComplete?.();
+                resolve();
+                return;
+            }
+
+            speechSynthesis.cancel();
+            setVoiceFeedback(text);
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.9;
+            utterance.pitch = 1.0;
+
+            utterance.onend = () => {
+                onComplete?.();
+                resolve();
+            };
+
+            utterance.onerror = (e) => {
+                console.error("Speech error:", e);
+                onComplete?.();
+                resolve();
+            };
+
+            speechSynthesis.speak(utterance);
+        });
     }, []);
-    
+
     const stopListening = useCallback(() => {
         setIsListening(false);
         recognitionRef.current?.stop();
     }, []);
 
-    const stopSpeaking = useCallback(() => {
-        if ('speechSynthesis' in window) {
-            speechSynthesis.cancel();
-        }
-    }, []);
-
-    const cancelVoiceLogin = useCallback(() => {
-        stopListening();
-        stopSpeaking();
-        setIsVoiceLoginActive(false);
-        setVoiceStep('idle');
-        setVoiceFeedback('');
-        setUsername('');
-        setEmail('');
-        setPassword('');
-        setError(null);
-        setTranscribedText('');
-    }, [stopListening, stopSpeaking]);
-
-    const speak = useCallback((text: string, onComplete?: () => void) => {
-        return new Promise<void>((resolve) => {
-            stopSpeaking();
-    
-            const handleEnd = () => {
-                playBeep();
-                onComplete?.();
-                resolve();
-            };
-    
-            if (!('speechSynthesis' in window)) {
-                console.error("Browser does not support Speech Synthesis.");
-                handleEnd();
-                return;
-            }
-    
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = state.currentLanguage;
-            utterance.onend = handleEnd;
-            utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
-                // Only log errors that are not interruptions, as they are expected.
-                if (e.error !== 'interrupted') {
-                    console.error("SpeechSynthesis Error:", e.error);
-                }
-                // The 'onend' event will fire after 'onerror', so we don't call handleEnd() here.
-            };
-            speechSynthesis.speak(utterance);
-        });
-    }, [playBeep, stopSpeaking, state.currentLanguage]);
-
     const startListening = useCallback(() => {
         const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            speak("Voice recognition is not supported in this browser.", cancelVoiceLogin);
+            speak("Voice recognition is not supported in this browser.");
             return;
         }
-        
-        recognitionRef.current = new SpeechRecognition();
-        const recognition = recognitionRef.current;
-        recognition.lang = state.currentLanguage;
-        recognition.continuous = false;
-        recognition.interimResults = false;
 
-        recognition.onresult = (event) => {
-            const lastResult = event.results[event.results.length - 1];
-            const transcript = lastResult[0].transcript.trim();
-            handleVoiceInputRef.current(transcript);
-        };
-        
-        recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-            if (event.error === 'no-speech') {
-                speak("I didn't hear anything. Let's try that again.", startListening);
-            } else {
-                speak("Sorry, I had trouble understanding. Please try again.", cancelVoiceLogin);
-            }
-        };
+        if (!recognitionRef.current) {
+            recognitionRef.current = new SpeechRecognition();
+            const recognition = recognitionRef.current;
+            recognition.lang = 'en-US';
+            recognition.continuous = false;
+            recognition.interimResults = false;
 
-        recognition.onend = () => {
-            setIsListening(false);
-        };
+            recognition.onresult = (event) => {
+                const transcript = event.results[event.results.length - 1][0].transcript.trim();
+                setTranscribedText(transcript);
+                handleVoiceInput(transcript);
+            };
 
-        recognition.start();
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                if (event.error !== 'no-speech') {
+                    speak("Sorry, I had trouble understanding. Let's try again.", startListening);
+                } else {
+                    speak("I didn't hear anything. Please try again.", startListening);
+                }
+            };
+
+            recognition.onend = () => {
+                setIsListening(false);
+            };
+        }
+
+        recognitionRef.current.start();
         setIsListening(true);
-    }, [state.currentLanguage, speak, cancelVoiceLogin]);
+    }, [speak]);
+
+    // Handle voice input based on current step
+    const handleVoiceInput = useCallback((text: string) => {
+        const lowerText = text.toLowerCase().trim();
+        console.log('[VOICE INPUT]', lowerText, 'at step:', voiceStepRef.current);
+
+        switch(voiceStepRef.current) {
+            case 'initial':
+                // User chooses voice or manual
+                if (lowerText.includes('voice')) {
+                    setVoiceStep('choice');
+                    speak('Would you like to register a new account or login?', startListening);
+                } else if (lowerText.includes('manual')) {
+                    setIsVoiceMode(false);
+                    speechSynthesis.cancel();
+                }
+                break;
+
+            case 'choice':
+                // User chooses register or login
+                if (lowerText.includes('register')) {
+                    setIsRegistering(true);
+                    setVoiceStep('username');
+                    speak('What username would you like?', startListening);
+                } else if (lowerText.includes('login')) {
+                    setIsRegistering(false);
+                    setVoiceStep('username');
+                    speak('What is your username?', startListening);
+                }
+                break;
+
+            case 'username':
+                usernameRef.current = text.trim();
+                setUsername(text.trim());
+                
+                if (isRegisteringRef.current) {
+                    // For registration, auto-generate email
+                    const generatedEmail = `${text.trim()}@gmail.com`;
+                    setEmail(generatedEmail);
+                    setVoiceStep('password');
+                    speak(`Your email will be ${generatedEmail}. Please say your password.`, startListening);
+                } else {
+                    // For login, just ask for password
+                    setVoiceStep('password');
+                    speak('What is your password?', startListening);
+                }
+                break;
+
+            case 'password':
+                passwordRef.current = text.replace(/\s/g, '');
+                setPassword(text.replace(/\s/g, ''));
+                setVoiceStep('confirm');
+                
+                if (isRegisteringRef.current) {
+                    speak('Ready to create your account? Say yes to confirm or no to cancel.', startListening);
+                } else {
+                    speak('Ready to login? Say yes to confirm or no to cancel.', startListening);
+                }
+                break;
+
+            case 'confirm':
+                if (lowerText.includes('yes') || lowerText.includes('yeah') || lowerText.includes('confirm') || lowerText.includes('proceed')) {
+                    stopListening();
+                    speak(isRegisteringRef.current ? 'Creating your account...' : 'Logging you in...');
+                    // Proceed with authentication
+                    setTimeout(() => {
+                        handleVoiceAuth(usernameRef.current, passwordRef.current);
+                    }, 1000);
+                } else if (lowerText.includes('no') || lowerText.includes('cancel')) {
+                    speak('Authentication cancelled. Returning to start.', () => {
+                        resetVoiceAuth();
+                    });
+                }
+                break;
+        }
+    }, [speak, startListening, stopListening]);
+
+    // Perform actual authentication
+    const handleVoiceAuth = async (usernameValue: string, passwordValue: string) => {
+        try {
+            if (isRegisteringRef.current) {
+                // Registration
+                if (!usernameValue.trim()) {
+                    speak('Username is required. Let\'s try again.', () => resetVoiceAuth());
+                    return;
+                }
+                if (passwordValue.length < 6) {
+                    speak('Password must be at least 6 characters. Let\'s try again.', () => resetVoiceAuth());
+                    return;
+                }
+
+                const normalizedUsername = usernameValue.trim().toLowerCase();
+                const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
+                if (usernameDoc.exists) {
+                    speak('This username is already taken. Let\'s try again.', () => resetVoiceAuth());
+                    return;
+                }
+
+                const emailValue = `${usernameValue.trim()}@gmail.com`;
+                const userCredential = await auth.createUserWithEmailAndPassword(emailValue, passwordValue);
+                await setupNewUser(userCredential.user!, usernameValue);
+                speak('Account created successfully! Welcome to VoxMail.');
+            } else {
+                // Login
+                const normalizedUsername = usernameValue.trim().toLowerCase();
+                const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
+                
+                if (!usernameDoc.exists) {
+                    speak('Username not found. Let\'s try again.', () => resetVoiceAuth());
+                    return;
+                }
+
+                const uid = usernameDoc.data()!.uid;
+                const userDoc = await db.collection('users').doc(uid).get();
+                
+                if (!userDoc.exists || !userDoc.data()?.email) {
+                    speak('Could not find user details. Please contact support.');
+                    return;
+                }
+
+                const loginEmail = userDoc.data()!.email;
+                await auth.signInWithEmailAndPassword(loginEmail, passwordValue);
+                speak('Login successful! Welcome back.');
+            }
+        } catch (err: any) {
+            const errorMessage = err.message.replace('Firebase: ', '');
+            speak(`Error: ${errorMessage}. Let\'s try again.`, () => resetVoiceAuth());
+        }
+    };
+
+    // Reset voice authentication
+    const resetVoiceAuth = () => {
+        setVoiceStep('choice');
+        usernameRef.current = '';
+        passwordRef.current = '';
+        setUsername('');
+        setPassword('');
+        setEmail('');
+        setTranscribedText('');
+        speak('Would you like to register a new account or login?', startListening);
+    };
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            stopListening();
+            speechSynthesis.cancel();
+        };
+    }, [stopListening]);
+
+    // Welcome message - spoken once on page load
+    useEffect(() => {
+        if (!hasSpokenWelcomeRef.current) {
+            hasSpokenWelcomeRef.current = true;
+            // Set voice mode as default, waiting for user gesture
+            setIsVoiceMode(true);
+            setVoiceStep('initial');
+        }
+    }, []);
+
+    // Handle user gesture to enable voice
+    const handleEnableVoice = useCallback(() => {
+        if (!needsUserGesture) return;
+        
+        setNeedsUserGesture(false);
+        speak('Welcome to VoxMail. Say voice for voice authentication, or manual for manual login.', startListening);
+    }, [needsUserGesture, speak, startListening]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
 
         try {
-            if (isRegisteringRef.current) {
+            if (isRegistering) {
                 // REGISTER LOGIC
                 if (!username.trim()) {
                     setError('Username is required.');
@@ -179,15 +352,12 @@ const Login: React.FC = () => {
                 }
                 if (password.length < 6) {
                     setError('Password must be at least 6 characters.');
-                    if (isVoiceLoginActive) speak("Password must be at least 6 characters. Please try again.", cancelVoiceLogin);
                     return;
                 }
                 const normalizedUsername = username.trim().toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                 if (usernameDoc.exists) {
-                    const errText = 'This username is already taken. Please choose another.';
-                    setError(errText);
-                    if (isVoiceLoginActive) speak(errText, cancelVoiceLogin);
+                    setError('This username is already taken. Please choose another.');
                     return;
                 }
                 
@@ -200,17 +370,13 @@ const Login: React.FC = () => {
                     const normalizedUsername = email.trim().toLowerCase();
                     const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                     if (!usernameDoc.exists) {
-                        const errText = "User with that username not found.";
-                        setError(errText);
-                        if (isVoiceLoginActive) speak(errText, cancelVoiceLogin);
+                        setError("User with that username not found.");
                         return;
                     }
                     const uid = usernameDoc.data()!.uid;
                     const userDoc = await db.collection('users').doc(uid).get();
                     if (!userDoc.exists || !userDoc.data()?.email) {
-                        const errText = "Could not find user details. Please contact support.";
-                        setError(errText);
-                        if (isVoiceLoginActive) speak(errText, cancelVoiceLogin);
+                        setError("Could not find user details. Please contact support.");
                         return;
                     }
                     loginEmail = userDoc.data()!.email;
@@ -221,109 +387,83 @@ const Login: React.FC = () => {
         } catch (err: any) {
             const errorMessage = err.message.replace('Firebase: ', '');
             setError(errorMessage);
-            if (isVoiceLoginActive) {
-                speak(`An error occurred: ${errorMessage}. Please try again.`, cancelVoiceLogin);
-            }
         }
     };
-    
-    const handleVoiceInput = useCallback((text: string) => {
-        const lowerText = text.toLowerCase().trim();
-        setTranscribedText(text);
 
-        if (!lowerText) {
-            speak("I didn't hear anything. Let's try that again.", startListening);
-            return;
-        }
-
-        switch(voiceStepRef.current) {
-            case 'action':
-                if (lowerText.includes('register')) {
-                    setIsRegistering(true);
-                    setVoiceFeedback('Registering. What username would you like?');
-                    speak('Registering. What username would you like?', startListening);
-                    setVoiceStep('username');
-                } else {
-                    setIsRegistering(false);
-                    setVoiceFeedback('Logging in. What is your email or username?');
-                    speak('Logging in. What is your email or username?', startListening);
-                    setVoiceStep('email');
-                }
-                break;
-            case 'username':
-                setUsername(text.trim());
-                setVoiceFeedback('Got it. Now, what is your email?');
-                speak('Got it. Now, what is your email?', startListening);
-                setVoiceStep('email');
-                break;
-            case 'email':
-                const parsedEmail = lowerText.includes('at') ? lowerText.split(' ').map(word => word === 'at' ? '@' : word === 'dot' ? '.' : word).join('') : text.trim();
-                setEmail(parsedEmail);
-                setVoiceFeedback('Got it. What is your password?');
-                speak('Got it. What is your password?', startListening);
-                setVoiceStep('password');
-                break;
-            case 'password':
-                const parsedPassword = lowerText.replace(/\s/g, '');
-                setPassword(parsedPassword);
-                setVoiceFeedback('Ready to submit? Say yes to confirm or no to cancel.');
-                speak('Ready to submit? Say yes to confirm or no to cancel.', startListening);
-                setVoiceStep('confirm');
-                break;
-            case 'confirm':
-                 if (lowerText.includes('yes') || lowerText.includes('proceed') || lowerText.includes('submit')) {
-                    const actionText = isRegisteringRef.current ? 'Registering...' : 'Signing in...';
-                    setVoiceFeedback(actionText);
-                    handleSubmit({ preventDefault: () => {} } as React.FormEvent);
-                 } else {
-                    speak("Okay, I'll cancel.", cancelVoiceLogin);
-                 }
-                break;
-        }
-    }, [speak, cancelVoiceLogin, handleSubmit, startListening]);
-    
-    useEffect(() => { handleVoiceInputRef.current = handleVoiceInput; }, [handleVoiceInput]);
-
-    const handleVoiceLoginStart = () => {
-        setIsVoiceLoginActive(true);
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        setVoiceStep('action');
-        const feedback = 'Welcome! Would you like to log in or register?';
-        setVoiceFeedback(feedback);
-        speak(feedback, startListening);
-    };
-
-    useEffect(() => {
-        return () => { 
-            stopListening();
-            stopSpeaking();
-            audioContextRef.current?.close().catch(console.error);
-         };
-    }, [stopListening, stopSpeaking]);
-    
-    if (isVoiceLoginActive) {
-        return (
-            <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4">
-                <div className="w-full max-w-sm p-8 space-y-6 bg-white rounded-xl shadow-lg text-center">
-                    <MicIcon className="w-16 h-16 text-blue-600 mx-auto animate-pulse" />
-                    <h2 className="text-2xl font-bold text-gray-800">{t('voiceSignInTitle')}</h2>
-                    <p className="text-lg text-gray-600 min-h-[5rem] flex items-center justify-center">{voiceFeedback}</p>
-                    <div className="text-sm text-gray-600 bg-gray-100 rounded-lg p-3 min-h-[3.5rem] flex items-center justify-center">
-                        <p className="font-mono">{transcribedText || (isListening ? '...' : ' ')}</p>
-                    </div>
-                    <div className="pt-4">
-                        <button 
-                            onClick={cancelVoiceLogin}
-                            className="w-full py-3 font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
+    // Render voice authentication UI
+    if (isVoiceMode) {
+        // Show "Click to Start" overlay if user gesture is needed
+        if (needsUserGesture) {
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4">
+                    <div 
+                        className="w-full max-w-md p-12 space-y-8 bg-white rounded-xl shadow-lg text-center cursor-pointer hover:shadow-2xl transition-shadow"
+                        onClick={handleEnableVoice}
+                    >
+                        <div className="inline-block p-4 bg-blue-600 rounded-full shadow-md">
+                            <MicIcon className="w-16 h-16 text-white animate-pulse" />
+                        </div>
+                        <h1 className="text-3xl font-bold text-blue-600">VoxMail Voice Assistant</h1>
+                        <p className="text-xl text-gray-700 font-semibold">🎤 Click anywhere to start</p>
+                        <p className="text-sm text-gray-500">Voice authentication will begin automatically</p>
+                        
+                        <button
+                            onClick={() => {
+                                setIsVoiceMode(false);
+                                setNeedsUserGesture(false);
+                            }}
+                            className="mt-6 px-6 py-2 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                         >
-                            {t('cancel')}
+                            Use Manual Login Instead
                         </button>
                     </div>
+                </div>
+            );
+        }
+
+        // Show active voice authentication interface
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4">
+                <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-xl shadow-lg text-center">
+                    <MicIcon className="w-20 h-20 text-blue-600 mx-auto animate-pulse" />
+                    <h2 className="text-2xl font-bold text-gray-800">Voice Authentication</h2>
+                    
+                    <div className="min-h-[6rem] flex items-center justify-center">
+                        <p className="text-lg text-gray-600">{voiceFeedback}</p>
+                    </div>
+
+                    {transcribedText && (
+                        <div className="bg-blue-50 rounded-lg p-4">
+                            <p className="text-sm text-gray-500 mb-1">You said:</p>
+                            <p className="font-mono text-gray-800">{transcribedText}</p>
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-center space-x-2">
+                        {isListening && (
+                            <div className="flex items-center space-x-2 text-red-500">
+                                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                                <span className="text-sm font-semibold">Listening...</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={() => {
+                            setIsVoiceMode(false);
+                            speechSynthesis.cancel();
+                            stopListening();
+                        }}
+                        className="mt-6 px-6 py-2 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                        Switch to Manual Login
+                    </button>
                 </div>
             </div>
         );
     }
 
+    // Render manual login form
     return (
         <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4">
             <div className="w-full max-w-sm p-8 space-y-6 bg-white rounded-xl shadow-lg">
@@ -333,21 +473,6 @@ const Login: React.FC = () => {
                     </div>
                     <h1 className="text-3xl font-bold text-blue-600">{t('voxmailTitle')}</h1>
                     <p className="text-sm text-gray-500">{t('voxmailSubtitle')}</p>
-                </div>
-                
-                <button 
-                    className="w-full flex items-center justify-center gap-3 py-3 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    onClick={handleVoiceLoginStart}
-                    aria-label="Sign in or register with your voice"
-                >
-                    <MicIcon className="w-5 h-5 text-gray-600" />
-                    {t('useVoiceSignIn')}
-                </button>
-
-                <div className="flex items-center">
-                    <hr className="flex-grow border-gray-200" />
-                    <span className="mx-4 text-xs font-medium text-gray-400 uppercase">{t('orContinueManually')}</span>
-                    <hr className="flex-grow border-gray-200" />
                 </div>
 
                 <div className="flex bg-gray-100 p-1 rounded-lg">

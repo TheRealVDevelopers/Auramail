@@ -5,9 +5,9 @@ import Header from './components/Header';
 import EmailList from './components/EmailList';
 import EmailDetail from './components/EmailDetail';
 import ComposeEmail from './components/ComposeEmail';
+import Chatbot from './components/Chatbot';
 import { useAppContext } from './context/AppContext';
 import { EmptyMailboxIcon } from './components/icons/IconComponents';
-import Chatbot from './components/Chatbot';
 import Login from './components/Login';
 import { useTranslations } from './utils/translations';
 
@@ -15,8 +15,8 @@ const App: React.FC = () => {
   const { state, dispatch } = useAppContext();
   const t = useTranslations();
 
+  // Auto-open chatbot when user logs in
   useEffect(() => {
-    // Automatically open the chatbot when the user logs in and the app is ready.
     if (state.isAuthenticated && !state.loading && !state.isChatbotOpen) {
       dispatch({ type: 'TOGGLE_CHATBOT' });
     }

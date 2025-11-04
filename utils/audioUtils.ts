@@ -34,19 +34,15 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
     utterance.pitch = 1.0;
 
     // Find a suitable voice
-    let selectedVoice = availableVoices.find(v => v.lang === lang && v.name.includes('Google'));
-    if (!selectedVoice) {
-        selectedVoice = availableVoices.find(v => v.lang === lang);
-    }
-    
-    // For Tamil, try to find any voice that supports it
-    if (lang === 'ta-IN' && !selectedVoice) {
-        // Try to find any Tamil voice, even with different locale
-        selectedVoice = availableVoices.find(v => v.lang.startsWith('ta'));
-        console.log(`[TTS] Found Tamil voice with different locale: ${selectedVoice?.name}`);
-    }
-    
-    if (selectedVoice) {
+                let selectedVoice = availableVoices.find(v => v.lang === lang && v.name.includes('Google'));
+                if (!selectedVoice) {
+                    selectedVoice = availableVoices.find(v => v.lang === lang);
+                }
+                
+                
+                if (!selectedVoice) {
+                    selectedVoice = availableVoices.find(v => v.lang.startsWith(lang.split('-')[0]));
+                }    if (selectedVoice) {
         utterance.voice = selectedVoice;
         console.log(`[TTS] Using voice: ${selectedVoice.name} for language: ${lang}`);
     } else {

@@ -66,8 +66,10 @@ import { auth, db } from '../firebase';
 import { setupNewUser } from '../services/emailService';
 import { LogoEnvelopeIcon, UserIcon, LockIcon, MicIcon } from './icons/IconComponents';
 import { useTranslations } from '../utils/translations';
+import { useAppContext } from '../context/AppContext';
 
 const Login: React.FC = () => {
+    const { state } = useAppContext();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -98,6 +100,7 @@ const Login: React.FC = () => {
 
     // Voice helper functions
     const speak = useCallback((text: string, onComplete?: () => void) => {
+        const currentLang = state.currentLanguage;
         return new Promise<void>((resolve) => {
             if (!('speechSynthesis' in window)) {
                 console.error("Browser does not support Speech Synthesis.");
@@ -110,7 +113,7 @@ const Login: React.FC = () => {
             setVoiceFeedback(text);
 
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'en-US';
+            utterance.lang = currentLang;
             utterance.rate = 0.9;
             utterance.pitch = 1.0;
 
@@ -127,7 +130,7 @@ const Login: React.FC = () => {
 
             speechSynthesis.speak(utterance);
         });
-    }, []);
+    }, [state]);
 
     const stopListening = useCallback(() => {
         setIsListening(false);
@@ -144,7 +147,7 @@ const Login: React.FC = () => {
         if (!recognitionRef.current) {
             recognitionRef.current = new SpeechRecognition();
             const recognition = recognitionRef.current;
-            recognition.lang = 'en-US';
+            recognition.lang = state.currentLanguage;
             recognition.continuous = false;
             recognition.interimResults = false;
 
@@ -170,7 +173,7 @@ const Login: React.FC = () => {
 
         recognitionRef.current.start();
         setIsListening(true);
-    }, [speak]);
+    }, [speak, state]);
 
     // Handle voice input based on current step
     const handleVoiceInput = useCallback((text: string) => {

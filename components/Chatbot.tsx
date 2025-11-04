@@ -434,7 +434,7 @@ const Chatbot: React.FC = () => {
         // If we have a personality response, use it and return early
         if (personalityResponse) {
             await speak(personalityResponse, () => {
-                setShouldRestartListening(true);
+                // Don't setShouldRestartListening here as it's handled in the speak function
             });
             setChatbotStatus('IDLE');
             return;
@@ -594,7 +594,7 @@ const Chatbot: React.FC = () => {
             // Speak the response
             if (response) {
                 await speak(response, () => {
-                    setShouldRestartListening(true);
+                    // Don't setShouldRestartListening here as it's handled in the speak function
                 });
             }
             
@@ -614,14 +614,10 @@ const Chatbot: React.FC = () => {
     
     // Handle user clicking to enable voice - this provides the required user gesture
     const handleEnableVoice = useCallback(() => {
-        // Prevent multiple calls
+        // If already enabled, just restart listening
         if (!needsUserGesture) {
-            console.log('[ENABLE] Already enabled, ignoring');
-            // If already enabled, just speak the welcome message
-            const welcomeMsg = t('welcomeMessage');
-            speak(welcomeMsg, () => {
-                setShouldRestartListening(true);
-            });
+            console.log('[ENABLE] Already enabled, restarting listening');
+            setShouldRestartListening(true);
             return;
         }
         
@@ -714,8 +710,8 @@ const Chatbot: React.FC = () => {
                 setShouldRestartListening(true);
             }, 1000);
         }
-    }, [t, needsUserGesture, logVoiceDiagnostics, state.currentLanguage, speak]); // Add state.currentLanguage as dependency
-    
+    }, [t, needsUserGesture, logVoiceDiagnostics, state.currentLanguage]); // Remove speak from dependencies
+
     const toggleListening = useCallback(() => {
         if (isListening) {
             recognitionRef.current?.stop();
@@ -806,7 +802,9 @@ const Chatbot: React.FC = () => {
             
             // Automatically speak the welcome message
             setTimeout(() => {
-                handleEnableVoice();
+                speak(welcomeMsg, () => {
+                    setShouldRestartListening(true);
+                });
             }, 500);
             
             // Log voice diagnostics on initialization

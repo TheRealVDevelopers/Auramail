@@ -38,6 +38,7 @@ const translations = {
     voxmailSubtitle: 'Voice-First Email Platform',
     voiceSignInTitle: 'Voice Sign-In',
     cancel: 'Cancel',
+    help: 'help',
     welcomeMessage: "Welcome to your VoxMail Assistant! I'm here to help you manage your emails using just your voice. You can say 'Open my inbox', 'Compose a new email', 'Read my first email', or ask me 'How can you help me?'. What would you like to do?",
     done: 'Done.',
     openingFolderUnreadCount: 'Opening {folder}. You have {count} unread messages.',
@@ -61,6 +62,7 @@ const translations = {
     readingEmailFrom: 'Reading email from {sender}',
     bodyStartsNow: 'Body starts now',
     change: 'change',
+    didntUnderstand: "Sorry, I didn't understand. Please try again.",
   },
   'hi-IN': {
     loading: 'वॉक्समेल लोड हो रहा है...',
@@ -99,6 +101,7 @@ const translations = {
     voxmailSubtitle: 'वॉयस-फर्स्ट ईमेल प्लेटफॉर्म',
     voiceSignInTitle: 'वॉयस साइन-इन',
     cancel: 'रद्द करें',
+    help: 'मदद',
     welcomeMessage: "आपके वॉक्समेल असिस्टेंट में आपका स्वागत है! मैं यहाँ हूँ ताकि मैं आपकी अपनी आवाज का उपयोग करके ईमेल का प्रबंधन करने में मदद कर सकूँ। आप 'मेरा इनबॉक्स खोलो', 'एक नया ईमेल लिखो', 'मेरा पहला ईमेल पढ़ो', या मुझसे 'आप मेरी मदद कैसे कर सकते हैं?' पूछ सकते हैं। आप क्या करना चाहेंगे?",
     done: 'हो गया।',
     openingFolderUnreadCount: '{folder} खोल रहा हूँ। आपके पास {count} अपठित संदेश हैं।',
@@ -122,6 +125,7 @@ const translations = {
     readingEmailFrom: '{sender} से ईमेल पढ़ा जा रहा है',
     bodyStartsNow: 'संदेश अब शुरू होता है',
     change: 'बदलाव',
+    didntUnderstand: "क्षमा करें, मुझे समझ नहीं आया। कृपया फिर से प्रयास करें।",
   },
   'ta-IN': {
     loading: 'வாக்ஸ்மெயில் ஏற்றப்படுகிறது...',
@@ -160,6 +164,7 @@ const translations = {
     voxmailSubtitle: 'குரல்-முதல் மின்னஞ்சல் தளம்',
     voiceSignInTitle: 'குரல் உள்நுழைவு',
     cancel: 'ரத்துசெய்',
+    help: 'உதவி',
     welcomeMessage: "உங்கள் வாக்ஸ்மெயில் உதவியாளருக்கு வரவேற்கிறோம்! உங்கள் குரலை மட்டும் பயன்படுத்தி மின்னஞ்சல்களை நிர்வகிக்க நான் உங்களுக்கு உதவ இங்கே இருக்கிறேன். 'எனது இன்பாக்ஸைத் திற', 'புதிய மின்னஞ்சலை எழுது', 'எனது முதல் மின்னஞ்சலைப் படி' அல்லது 'எனக்கு எப்படி உதவ முடியும்?' என்று கேளுங்கள். நீங்கள் என்ன செய்ய விரும்புகிறீர்கள்?",
     done: 'முடிந்தது.',
     openingFolderUnreadCount: '{folder} திறக்கப்படுகிறது. உங்களிடம் {count} படிக்காத செய்திகள் உள்ளன.',
@@ -183,6 +188,7 @@ const translations = {
     readingEmailFrom: '{sender} இலிருந்து மின்னஞ்சல் படிக்கப்படுகிறது',
     bodyStartsNow: 'உள்ளடக்கம் இப்போது தொடங்குகிறது',
     change: 'மாற்றம்',
+    didntUnderstand: "மன்னிக்கவும், எனக்கு புரியவில்லை. தயவுசெய்து மீண்டும் முயற்சிக்கவும்.",
   },
 };
 

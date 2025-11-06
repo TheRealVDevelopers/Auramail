@@ -316,13 +316,32 @@ const Login: React.FC = () => {
         speak('Would you like to register a new account or login?', startListening);
     };
 
-    // Cleanup on unmount
+    // Cleanup on unmount OR when user becomes authenticated
     useEffect(() => {
         return () => {
             stopListening();
             speechSynthesis.cancel();
+            if (recognitionRef.current) {
+                recognitionRef.current.abort();
+                recognitionRef.current = null;
+            }
         };
     }, [stopListening]);
+
+    // Stop login chatbot completely when user authenticates
+    useEffect(() => {
+        if (state.isAuthenticated) {
+            console.log('[LOGIN] User authenticated, stopping login chatbot...');
+            stopListening();
+            speechSynthesis.cancel();
+            if (recognitionRef.current) {
+                recognitionRef.current.abort();
+                recognitionRef.current = null;
+            }
+            setIsListening(false);
+            setIsVoiceMode(false);
+        }
+    }, [state.isAuthenticated, stopListening]);
 
     // Welcome message - spoken once on page load
     useEffect(() => {

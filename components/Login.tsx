@@ -67,6 +67,7 @@ import { setupNewUser } from '../services/emailService';
 import { LogoEnvelopeIcon, UserIcon, LockIcon, MicIcon } from './icons/IconComponents';
 import { useTranslations } from '../utils/translations';
 import { useAppContext } from '../context/AppContext';
+import { speakWithBrowserTTS } from '../utils/audioUtils';
 
 const Login: React.FC = () => {
     const { state } = useAppContext();
@@ -83,6 +84,7 @@ const Login: React.FC = () => {
     const [isListening, setIsListening] = useState(false);
     const [transcribedText, setTranscribedText] = useState('');
     const [needsUserGesture, setNeedsUserGesture] = useState(true);
+    const [isAuthenticating, setIsAuthenticating] = useState(false);
 
     // Refs
     const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -101,36 +103,9 @@ const Login: React.FC = () => {
     // Voice helper functions
     const speak = useCallback((text: string, onComplete?: () => void) => {
         const currentLang = state.currentLanguage;
-        return new Promise<void>((resolve) => {
-            if (!('speechSynthesis' in window)) {
-                console.error("Browser does not support Speech Synthesis.");
-                onComplete?.();
-                resolve();
-                return;
-            }
-
-            speechSynthesis.cancel();
-            setVoiceFeedback(text);
-
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = currentLang;
-            utterance.rate = 0.9;
-            utterance.pitch = 1.0;
-
-            utterance.onend = () => {
-                onComplete?.();
-                resolve();
-            };
-
-            utterance.onerror = (e) => {
-                console.error("Speech error:", e);
-                onComplete?.();
-                resolve();
-            };
-
-            speechSynthesis.speak(utterance);
-        });
-    }, [state]);
+        setVoiceFeedback(text);
+        speakWithBrowserTTS(text, currentLang, onComplete);
+    }, [state.currentLanguage]);
 
     const stopListening = useCallback(() => {
         setIsListening(false);
@@ -188,7 +163,9 @@ const Login: React.FC = () => {
                     speak('Would you like to register a new account or login?', startListening);
                 } else if (lowerText.includes('manual')) {
                     setIsVoiceMode(false);
-                    speechSynthesis.cancel();
+                    if (window.speechSynthesis) {
+                        window.speechSynthesis.cancel();
+                    }
                 }
                 break;
 
@@ -237,11 +214,12 @@ const Login: React.FC = () => {
             case 'confirm':
                 if (lowerText.includes('yes') || lowerText.includes('yeah') || lowerText.includes('confirm') || lowerText.includes('proceed')) {
                     stopListening();
-                    speak(isRegisteringRef.current ? 'Creating your account...' : 'Logging you in...');
+                    setIsAuthenticating(true);
+                    speak(isRegisteringRef.current ? 'Creating your account and training the application. Please wait...' : 'Logging you in...');
                     // Proceed with authentication
                     setTimeout(() => {
                         handleVoiceAuth(usernameRef.current, passwordRef.current);
-                    }, 1000);
+                    }, 1500);
                 } else if (lowerText.includes('no') || lowerText.includes('cancel')) {
                     speak('Authentication cancelled. Returning to start.', () => {
                         resetVoiceAuth();
@@ -257,10 +235,12 @@ const Login: React.FC = () => {
             if (isRegisteringRef.current) {
                 // Registration
                 if (!usernameValue.trim()) {
+                    setIsAuthenticating(false);
                     speak('Username is required. Let\'s try again.', () => resetVoiceAuth());
                     return;
                 }
                 if (passwordValue.length < 6) {
+                    setIsAuthenticating(false);
                     speak('Password must be at least 6 characters. Let\'s try again.', () => resetVoiceAuth());
                     return;
                 }
@@ -268,20 +248,30 @@ const Login: React.FC = () => {
                 const normalizedUsername = usernameValue.trim().toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                 if (usernameDoc.exists) {
+                    setIsAuthenticating(false);
                     speak('This username is already taken. Let\'s try again.', () => resetVoiceAuth());
                     return;
                 }
 
                 const emailValue = `${usernameValue.trim()}@gmail.com`;
+                console.log('[VOICE AUTH] Creating user account...');
                 const userCredential = await auth.createUserWithEmailAndPassword(emailValue, passwordValue);
+                console.log('[VOICE AUTH] User created, setting up profile...');
                 await setupNewUser(userCredential.user!, usernameValue);
-                speak('Account created successfully! Welcome to VoxMail.');
+                console.log('[VOICE AUTH] Setup complete. Transitioning to dashboard...');
+                
+                // Wait a moment for auth state to propagate, then speak success message
+                setTimeout(() => {
+                    speak('Account created successfully! Training complete. Taking you to your dashboard now.');
+                    // Auth state change will automatically trigger navigation to dashboard
+                }, 500);
             } else {
                 // Login
                 const normalizedUsername = usernameValue.trim().toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                 
                 if (!usernameDoc.exists) {
+                    setIsAuthenticating(false);
                     speak('Username not found. Let\'s try again.', () => resetVoiceAuth());
                     return;
                 }
@@ -290,15 +280,25 @@ const Login: React.FC = () => {
                 const userDoc = await db.collection('users').doc(uid).get();
                 
                 if (!userDoc.exists || !userDoc.data()?.email) {
+                    setIsAuthenticating(false);
                     speak('Could not find user details. Please contact support.');
                     return;
                 }
 
                 const loginEmail = userDoc.data()!.email;
+                console.log('[VOICE AUTH] Logging in...');
                 await auth.signInWithEmailAndPassword(loginEmail, passwordValue);
-                speak('Login successful! Welcome back.');
+                console.log('[VOICE AUTH] Login successful. Transitioning to dashboard...');
+                
+                // Wait a moment for auth state to propagate, then speak success message
+                setTimeout(() => {
+                    speak('Login successful! Welcome back. Taking you to your dashboard now.');
+                    // Auth state change will automatically trigger navigation to dashboard
+                }, 500);
             }
         } catch (err: any) {
+            console.error('[VOICE AUTH] Error:', err);
+            setIsAuthenticating(false);
             const errorMessage = err.message.replace('Firebase: ', '');
             speak(`Error: ${errorMessage}. Let\'s try again.`, () => resetVoiceAuth());
         }
@@ -306,6 +306,7 @@ const Login: React.FC = () => {
 
     // Reset voice authentication
     const resetVoiceAuth = () => {
+        setIsAuthenticating(false);
         setVoiceStep('choice');
         usernameRef.current = '';
         passwordRef.current = '';
@@ -320,7 +321,9 @@ const Login: React.FC = () => {
     useEffect(() => {
         return () => {
             stopListening();
-            speechSynthesis.cancel();
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
             if (recognitionRef.current) {
                 recognitionRef.current.abort();
                 recognitionRef.current = null;
@@ -328,12 +331,19 @@ const Login: React.FC = () => {
         };
     }, [stopListening]);
 
+    // Log auth state changes for debugging
+    useEffect(() => {
+        console.log('[LOGIN] Auth state changed - isAuthenticated:', state.isAuthenticated, 'loading:', state.loading);
+    }, [state.isAuthenticated, state.loading]);
+
     // Stop login chatbot completely when user authenticates
     useEffect(() => {
         if (state.isAuthenticated) {
             console.log('[LOGIN] User authenticated, stopping login chatbot...');
             stopListening();
-            speechSynthesis.cancel();
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
             if (recognitionRef.current) {
                 recognitionRef.current.abort();
                 recognitionRef.current = null;
@@ -448,21 +458,36 @@ const Login: React.FC = () => {
             <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4">
                 <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-xl shadow-lg text-center">
                     <MicIcon className="w-20 h-20 text-blue-600 mx-auto animate-pulse" />
-                    <h2 className="text-2xl font-bold text-gray-800">Voice Authentication</h2>
+                    <h2 className="text-2xl font-bold text-gray-800">
+                        {isAuthenticating ? 'Processing...' : 'Voice Authentication'}
+                    </h2>
                     
                     <div className="min-h-[6rem] flex items-center justify-center">
                         <p className="text-lg text-gray-600">{voiceFeedback}</p>
                     </div>
 
-                    {transcribedText && (
+                    {transcribedText && !isAuthenticating && (
                         <div className="bg-blue-50 rounded-lg p-4">
                             <p className="text-sm text-gray-500 mb-1">You said:</p>
                             <p className="font-mono text-gray-800">{transcribedText}</p>
                         </div>
                     )}
 
+                    {isAuthenticating && (
+                        <div className="bg-green-50 rounded-lg p-4">
+                            <div className="flex items-center justify-center space-x-2">
+                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce"></div>
+                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                            </div>
+                            <p className="text-sm text-green-700 mt-2 font-semibold">
+                                {isRegisteringRef.current ? 'Creating account and setting up your profile...' : 'Logging you in...'}
+                            </p>
+                        </div>
+                    )}
+
                     <div className="flex items-center justify-center space-x-2">
-                        {isListening && (
+                        {isListening && !isAuthenticating && (
                             <div className="flex items-center space-x-2 text-red-500">
                                 <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                                 <span className="text-sm font-semibold">Listening...</span>
@@ -470,16 +495,20 @@ const Login: React.FC = () => {
                         )}
                     </div>
 
-                    <button
-                        onClick={() => {
-                            setIsVoiceMode(false);
-                            speechSynthesis.cancel();
-                            stopListening();
-                        }}
-                        className="mt-6 px-6 py-2 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                        Switch to Manual Login
-                    </button>
+                    {!isAuthenticating && (
+                        <button
+                            onClick={() => {
+                                setIsVoiceMode(false);
+                                if (window.speechSynthesis) {
+                                    window.speechSynthesis.cancel();
+                                }
+                                stopListening();
+                            }}
+                            className="mt-6 px-6 py-2 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                            Switch to Manual Login
+                        </button>
+                    )}
                 </div>
             </div>
         );

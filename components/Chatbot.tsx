@@ -96,23 +96,46 @@ const Chatbot: React.FC = () => {
             try {
                 const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
                 audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-                if (audioContextRef.current.state === 'suspended') {
-                    audioContextRef.current.resume();
-                }
                 console.log('[AUDIO] AudioContext initialized');
             } catch (e) {
                 console.error('[AUDIO] Failed to create AudioContext:', e);
+                return;
             }
-        } else if (audioContextRef.current.state === 'suspended') {
-            audioContextRef.current.resume();
+        }
+        
+        // Resume if suspended (required for autoplay policies)
+        if (audioContextRef.current.state === 'suspended') {
+            audioContextRef.current.resume().then(() => {
+                console.log('[AUDIO] AudioContext resumed');
+            }).catch((e) => {
+                console.warn('[AUDIO] Failed to resume AudioContext:', e);
+            });
         }
     }, []);
     
     const playBeep = useCallback((type: 'start' | 'end') => {
-        if (!audioContextRef.current) return;
+        if (!audioContextRef.current) {
+            initAudioContext();
+            if (!audioContextRef.current) return;
+        }
         
         try {
             const ctx = audioContextRef.current;
+            
+            // Ensure context is running
+            if (ctx.state === 'suspended') {
+                ctx.resume().catch(e => {
+                    console.warn('[BEEP] Could not resume context:', e);
+                    return;
+                });
+            }
+            
+            // Only create nodes if context is running
+            if (ctx.state === 'closed') {
+                console.warn('[BEEP] AudioContext is closed, cannot play beep');
+                return;
+            }
+            
             const oscillator = ctx.createOscillator();
             const gainNode = ctx.createGain();
             
@@ -132,7 +155,7 @@ const Chatbot: React.FC = () => {
         } catch (e) {
             console.error('[BEEP] Error playing beep:', e);
         }
-    }, []);
+    }, [initAudioContext]);
     
     // ====== CLEAR TIMERS ======
     
@@ -151,19 +174,24 @@ const Chatbot: React.FC = () => {
             return;
         }
         
-        // Clear any scheduled timers and stop everything
+        if (!text || text.trim().length === 0) {
+            console.log('[TTS] Empty text, skipping speech');
+            onComplete?.();
+            return;
+        }
+        
+        // Clear any scheduled timers and stop recognition (but don't cancel speech yet)
         clearAllScheduledTimers();
         if (recognitionRef.current) {
             try {
                 recognitionRef.current.stop();
-            } catch (e) {}
-        }
-        if (window.speechSynthesis) {
-            window.speechSynthesis.cancel();
+            } catch (e) {
+                // Ignore errors when stopping recognition
+            }
         }
         
         setBotState('SPEAKING');
-        console.log(`[TTS] Speaking: "${text}"`);
+        console.log(`[TTS] Speaking: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
         
         // Add to transcript
         setTranscript(prev => [...prev, {
@@ -175,6 +203,7 @@ const Chatbot: React.FC = () => {
         
         initAudioContext();
         
+        // Use the utility function which handles cancellation properly
         speakWithBrowserTTS(text, state.currentLanguage, () => {
             console.log('[TTS] Speech finished');
             setBotState('WAITING');
@@ -205,7 +234,7 @@ const Chatbot: React.FC = () => {
             scheduledTimersRef.current.push(timer1);
             onComplete?.();
         });
-    }, [isMuted, state.currentLanguage, playBeep, initAudioContext]);
+    }, [isMuted, state.currentLanguage, playBeep, initAudioContext, clearAllScheduledTimers, startListening]);
     
     // ====== SPEECH RECOGNITION ======
     
@@ -684,6 +713,8 @@ const Chatbot: React.FC = () => {
             if (window.speechSynthesis) {
                 window.speechSynthesis.cancel();
             }
+            // Don't close audio context on cleanup - let it be reused
+            // Only close if component is truly unmounting and we're sure we won't need it
         };
     }, [clearAllScheduledTimers, stopListening]);
     

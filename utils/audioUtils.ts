@@ -87,12 +87,22 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
         return;
     }
 
+    if (!text || text.trim().length === 0) {
+        console.warn('[TTS] Empty text provided, skipping speech');
+        onComplete?.();
+        return;
+    }
+
     const availableVoices = voices.length > 0 ? voices : await waitForVoices();
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    // Wait a bit to ensure any previous speech is fully cancelled
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const utterance = new SpeechSynthesisUtterance(text.trim());
     utterance.lang = lang; // always set requested language
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
+    utterance.volume = 1.0;
 
     const selectedVoice = selectVoiceForLang(availableVoices, lang);
     if (selectedVoice) {
@@ -103,48 +113,86 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
         console.warn(`[TTS] No dedicated voice found for ${lang}. Falling back to browser selection with utterance.lang=${lang}.`);
     }
 
-    utterance.onend = () => {
+    let isCompleted = false;
+    const complete = () => {
+        if (isCompleted) return;
+        isCompleted = true;
         console.log(`[TTS] Finished speaking in ${lang}`);
         onComplete?.();
     };
 
+    utterance.onend = (event) => {
+        console.log(`[TTS] Speech ended normally`);
+        complete();
+    };
+
     utterance.onerror = (event) => {
-        console.error('[TTS] SpeechSynthesisUtterance error:', event);
-        onComplete?.();
+        // Don't treat 'interrupted' as a fatal error - it just means speech was cancelled
+        if (event.error === 'interrupted') {
+            console.log('[TTS] Speech was interrupted (cancelled)');
+            complete();
+        } else {
+            console.error('[TTS] SpeechSynthesisUtterance error:', event.error, event);
+            complete();
+        }
     };
 
     try {
-        // Clear any queued or stuck utterances first
+        // Cancel any ongoing speech first, but wait for it to fully stop
         if (speechSynthesis.speaking || speechSynthesis.pending) {
             speechSynthesis.cancel();
+            // Give it a moment to fully cancel
+            await new Promise(resolve => setTimeout(resolve, 150));
         }
+
         // Attempt to speak
         speechSynthesis.speak(utterance);
+        console.log(`[TTS] Started speaking: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
         // Autoplay watchdog: if not actually speaking shortly after, retry on first gesture
         const checkDelay = 800;
+        let retryAttached = false;
         const retryOnGesture = () => {
+            if (isCompleted) return;
             try {
-                // Cancel any remnants and retry speak
-                speechSynthesis.cancel();
-                // Some browsers require resume before speak
-                if (speechSynthesis.paused) {
-                    speechSynthesis.resume();
+                // Only retry if speech hasn't started
+                if (!speechSynthesis.speaking && !speechSynthesis.pending) {
+                    console.log('[TTS] Retrying speech on user gesture');
+                    speechSynthesis.cancel();
+                    // Create a new utterance for retry
+                    const retryUtterance = new SpeechSynthesisUtterance(text.trim());
+                    retryUtterance.lang = lang;
+                    retryUtterance.rate = 1.0;
+                    retryUtterance.pitch = 1.0;
+                    retryUtterance.volume = 1.0;
+                    if (selectedVoice) {
+                        retryUtterance.voice = selectedVoice;
+                    }
+                    retryUtterance.onend = () => complete();
+                    retryUtterance.onerror = (e) => {
+                        if (e.error !== 'interrupted') {
+                            console.error('[TTS] Retry error:', e.error);
+                        }
+                        complete();
+                    };
+                    speechSynthesis.speak(retryUtterance);
                 }
-                speechSynthesis.speak(utterance);
             } catch (e) {
                 console.warn('[TTS] Gesture retry failed:', e);
             } finally {
-                window.removeEventListener('pointerdown', retryOnGesture, true);
-                window.removeEventListener('touchstart', retryOnGesture, true);
-                window.removeEventListener('keydown', retryOnGesture, true);
-                window.removeEventListener('click', retryOnGesture, true);
+                if (retryAttached) {
+                    window.removeEventListener('pointerdown', retryOnGesture, true);
+                    window.removeEventListener('touchstart', retryOnGesture, true);
+                    window.removeEventListener('keydown', retryOnGesture, true);
+                    window.removeEventListener('click', retryOnGesture, true);
+                }
             }
         };
 
         window.setTimeout(() => {
-            const blocked = !speechSynthesis.speaking && !speechSynthesis.pending;
-            if (blocked) {
+            const blocked = !speechSynthesis.speaking && !speechSynthesis.pending && !isCompleted;
+            if (blocked && !retryAttached) {
+                retryAttached = true;
                 // Attach one-time gesture listeners to trigger speak
                 window.addEventListener('pointerdown', retryOnGesture, true);
                 window.addEventListener('touchstart', retryOnGesture, true);
@@ -155,6 +203,6 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
         }, checkDelay);
     } catch (e) {
         console.error('[TTS] Failed to initiate speech:', e);
-        onComplete?.();
+        complete();
     }
 };

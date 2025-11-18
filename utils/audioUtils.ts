@@ -93,10 +93,14 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
         return;
     }
 
-    const availableVoices = voices.length > 0 ? voices : await waitForVoices();
+    // Cancel any ongoing speech first
+    if (speechSynthesis.speaking || speechSynthesis.pending) {
+        speechSynthesis.cancel();
+        // Give it a moment to fully cancel
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
 
-    // Wait a bit to ensure any previous speech is fully cancelled
-    await new Promise(resolve => setTimeout(resolve, 100));
+    const availableVoices = voices.length > 0 ? voices : await waitForVoices();
 
     const utterance = new SpeechSynthesisUtterance(text.trim());
     utterance.lang = lang; // always set requested language
@@ -138,10 +142,10 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
     };
 
     try {
-        // Cancel any ongoing speech first, but wait for it to fully stop
+        // For autoplay policy compliance, we may need user interaction
+        // Check if we can speak immediately or need to wait for user interaction
         if (speechSynthesis.speaking || speechSynthesis.pending) {
             speechSynthesis.cancel();
-            // Give it a moment to fully cancel
             await new Promise(resolve => setTimeout(resolve, 150));
         }
 
@@ -189,7 +193,7 @@ export const speakWithBrowserTTS = async (text: string, lang: string, onComplete
             }
         };
 
-        window.setTimeout(() => {
+        setTimeout(() => {
             const blocked = !speechSynthesis.speaking && !speechSynthesis.pending && !isCompleted;
             if (blocked && !retryAttached) {
                 retryAttached = true;

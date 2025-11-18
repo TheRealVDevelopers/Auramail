@@ -31,7 +31,7 @@ declare global {
 
 type BotState = 'IDLE' | 'SPEAKING' | 'WAITING' | 'LISTENING' | 'PROCESSING';
 
-type ComposeStep = 'none' | 'recipient' | 'subject' | 'body' | 'confirm';
+type ComposeStep = 'none' | 'recipient' | 'subject' | 'body' | 'confirm' | 'change' | 'change-recipient' | 'change-subject' | 'change-body';
 
 interface Transcript {
     id: string;
@@ -105,29 +105,40 @@ const Chatbot: React.FC = () => {
         
         // Resume if suspended (required for autoplay policies)
         if (audioContextRef.current.state === 'suspended') {
-            audioContextRef.current.resume().then(() => {
-                console.log('[AUDIO] AudioContext resumed');
-            }).catch((e) => {
-                console.warn('[AUDIO] Failed to resume AudioContext:', e);
-            });
+            // We need a user gesture to resume the AudioContext
+            const resumeAudioContext = () => {
+                audioContextRef.current!.resume().then(() => {
+                    console.log('[AUDIO] AudioContext resumed');
+                }).catch((e) => {
+                    console.warn('[AUDIO] Failed to resume AudioContext:', e);
+                });
+                // Remove event listeners after first successful resume
+                window.removeEventListener('click', resumeAudioContext, true);
+                window.removeEventListener('pointerdown', resumeAudioContext, true);
+                window.removeEventListener('keydown', resumeAudioContext, true);
+            };
+            
+            // Attach event listeners for user interaction
+            window.addEventListener('click', resumeAudioContext, true);
+            window.addEventListener('pointerdown', resumeAudioContext, true);
+            window.addEventListener('keydown', resumeAudioContext, true);
         }
     }, []);
     
     const playBeep = useCallback((type: 'start' | 'end') => {
         if (!audioContextRef.current) {
             initAudioContext();
+            // If we just initialized, we might need to wait for user interaction
             if (!audioContextRef.current) return;
         }
         
         try {
             const ctx = audioContextRef.current;
             
-            // Ensure context is running
+            // Ensure context is running - if suspended, we need user interaction
             if (ctx.state === 'suspended') {
-                ctx.resume().catch(e => {
-                    console.warn('[BEEP] Could not resume context:', e);
-                    return;
-                });
+                console.warn('[BEEP] AudioContext suspended, waiting for user interaction');
+                return;
             }
             
             // Only create nodes if context is running
@@ -204,37 +215,40 @@ const Chatbot: React.FC = () => {
         initAudioContext();
         
         // Use the utility function which handles cancellation properly
-        speakWithBrowserTTS(text, state.currentLanguage, () => {
-            console.log('[TTS] Speech finished');
-            setBotState('WAITING');
-            
-            // Schedule: 3s wait → beep → 1s → mic ON
-            const timer1 = setTimeout(() => {
-                if (botStateRef.current !== 'WAITING') {
-                    console.log('[TTS] Post-speech sequence cancelled (state changed)');
-                    return;
-                }
+        // Add a small delay to ensure AudioContext is ready
+        setTimeout(() => {
+            speakWithBrowserTTS(text, state.currentLanguage, () => {
+                console.log('[TTS] Speech finished');
+                setBotState('WAITING');
                 
-                playBeep('end');
-                console.log('[TTS] Post-speech beep played');
-                
-                const timer2 = setTimeout(() => {
+                // Schedule: 3s wait → beep → 1s → mic ON
+                const timer1 = setTimeout(() => {
                     if (botStateRef.current !== 'WAITING') {
-                        console.log('[TTS] Mic activation cancelled (state changed)');
+                        console.log('[TTS] Post-speech sequence cancelled (state changed)');
                         return;
                     }
                     
-                    console.log('[TTS] Starting mic now');
-                    startListening();
-                }, 1000);
+                    playBeep('end');
+                    console.log('[TTS] Post-speech beep played');
+                    
+                    const timer2 = setTimeout(() => {
+                        if (botStateRef.current !== 'WAITING') {
+                            console.log('[TTS] Mic activation cancelled (state changed)');
+                            return;
+                        }
+                        
+                        console.log('[TTS] Starting mic now');
+                        startListening();
+                    }, 1000);
+                    
+                    scheduledTimersRef.current.push(timer2);
+                }, 3000);
                 
-                scheduledTimersRef.current.push(timer2);
-            }, 3000);
-            
-            scheduledTimersRef.current.push(timer1);
-            onComplete?.();
-        });
-    }, [isMuted, state.currentLanguage, playBeep, initAudioContext, clearAllScheduledTimers, startListening]);
+                scheduledTimersRef.current.push(timer1);
+                onComplete?.();
+            });
+        }, 100);
+    }, [isMuted, state.currentLanguage, playBeep, initAudioContext, clearAllScheduledTimers]);
     
     // ====== SPEECH RECOGNITION ======
     
@@ -252,7 +266,10 @@ const Chatbot: React.FC = () => {
         
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            speak('Speech recognition is not supported in this browser');
+            // Try to speak after a delay to ensure AudioContext is ready
+            setTimeout(() => {
+                speak('Speech recognition is not supported in this browser');
+            }, 100);
             return;
         }
         
@@ -299,7 +316,10 @@ const Chatbot: React.FC = () => {
                 setLiveTranscript('');
                 
                 if (event.error !== 'no-speech' && event.error !== 'aborted') {
-                    speak('Sorry, I had trouble hearing you. Please try again.');
+                    // Try to speak after a delay to ensure AudioContext is ready
+                    setTimeout(() => {
+                        speak('Sorry, I had trouble hearing you. Please try again.');
+                    }, 100);
                 }
             };
             
@@ -322,6 +342,7 @@ const Chatbot: React.FC = () => {
         playBeep('start');
         setBotState('LISTENING');
         
+        // Add a delay before starting recognition to ensure AudioContext is ready
         setTimeout(() => {
             if (recognitionRef.current && botStateRef.current === 'LISTENING') {
                 try {
@@ -331,7 +352,7 @@ const Chatbot: React.FC = () => {
                     setBotState('IDLE');
                 }
             }
-        }, 1000);
+        }, 300);
         
     }, [state.currentLanguage, speak, playBeep, initAudioContext]);
     
@@ -433,6 +454,8 @@ const Chatbot: React.FC = () => {
                             hi: 'ईमेल सफलतापूर्वक भेजा गया!',
                             ta: 'மின்னஞ்சல் வெற்றிகரமாக அனுப்பப்பட்டது!'
                         });
+                        setComposeStep('none');
+                        setDraftEmail({});
                     } catch (err) {
                         response = getResponse({
                             en: 'Failed to send email. Please try again.',
@@ -440,23 +463,92 @@ const Chatbot: React.FC = () => {
                             ta: 'மின்னஞ்சல் அனுப்புவதில் தோல்வி. மீண்டும் முயற்சிக்கவும்.'
                         });
                     }
-                    setComposeStep('none');
-                    setDraftEmail({});
-                } else if (/(change|edit|cancel|बदलो|மாற்று)/i.test(lowerText)) {
-                    setComposeStep('none');
-                    setDraftEmail({});
+                } else if (/(change|edit|बदलो|மாற்று)/i.test(lowerText)) {
+                    // Instead of canceling, ask what field to change
+                    setComposeStep('change');
                     response = getResponse({
-                        en: 'Email composition cancelled.',
-                        hi: 'ईमेल रचना रद्द की गई।',
-                        ta: 'மின்னஞ்சல் எழுதுதல் ரத்து செய்யப்பட்டது.'
+                        en: 'What would you like to change: the recipient, subject, or body?',
+                        hi: 'आप क्या बदलना चाहेंगे: प्राप्तकर्ता, विषय, या संदेश?',
+                        ta: 'நீங்கள் எதை மாற்ற விரும்புகிறீர்கள்: பெறுநர், தலைப்பு அல்லது உள்ளடக்கம்?'
                     });
                 } else {
                     response = getResponse({
-                        en: 'Say send to send the email, or change to cancel.',
-                        hi: 'भेजने के लिए send कहें, या रद्द करने के लिए change कहें।',
-                        ta: 'அனுப்ப send சொல்லுங்கள், அல்லது ரத்து செய்ய change சொல்லுங்கள்.'
+                        en: 'Say send to send the email, or change to modify it.',
+                        hi: 'भेजने के लिए send कहें, या बदलने के लिए change कहें।',
+                        ta: 'அனுப்ப send சொல்லுங்கள், அல்லது மாற்ற change சொல்லுங்கள்.'
                     });
                 }
+            }
+            // New step to handle changing specific fields
+            else if (step === 'change') {
+                const fieldMap: { [key: string]: string } = {
+                    'recipient': 'recipient',
+                    'प्राप्तकर्ता': 'recipient',
+                    'பெறுநர்': 'recipient',
+                    'subject': 'subject',
+                    'विषय': 'subject',
+                    'தலைப்பு': 'subject',
+                    'body': 'body',
+                    'संदेश': 'body',
+                    'உள்ளடக்கம்': 'body'
+                };
+                
+                let fieldToChange: string | undefined;
+                for (const [key, value] of Object.entries(fieldMap)) {
+                    if (lowerText.includes(key)) {
+                        fieldToChange = value;
+                        break;
+                    }
+                }
+                
+                if (fieldToChange) {
+                    setComposeStep(`change-${fieldToChange}` as ComposeStep);
+                    response = getResponse({
+                        en: `Okay, what should the new ${fieldToChange} be?`,
+                        hi: `ठीक है, नया ${fieldToChange} क्या होना चाहिए?`,
+                        ta: `சரி, புதிய ${fieldToChange} என்னவாக இருக்க வேண்டும்?`
+                    });
+                } else {
+                    response = getResponse({
+                        en: "Sorry, I didn't understand. Please say recipient, subject, or body.",
+                        hi: "क्षमा करें, मुझे समझ नहीं आया। कृपया प्राप्तकर्ता, विषय, या संदेश कहें।",
+                        ta: "மன்னிக்கவும், எனக்கு புரியவில்லை. தயவுசெய்து பெறுநர், தலைப்பு அல்லது உள்ளடக்கம் என்று சொல்லுங்கள்."
+                    });
+                }
+            }
+            // Handle new value for recipient
+            else if (step === 'change-recipient') {
+                const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                draft.recipient = emailMatch ? emailMatch[0] : text.trim();
+                setDraftEmail(draft);
+                setComposeStep('confirm');
+                response = getResponse({
+                    en: `Recipient updated to ${draft.recipient}. Here is the new preview. To: ${draft.recipient}, Subject: ${draft.subject}, Body: ${draft.body}. Say send to send, or change to modify.`,
+                    hi: `प्राप्तकर्ता ${draft.recipient} में अपडेट किया गया। यह नया पूर्वावलोकन है। प्राप्तकर्ता: ${draft.recipient}, विषय: ${draft.subject}, सामग्री: ${draft.body}। भेजने के लिए send कहें।`,
+                    ta: `பெறுநர் ${draft.recipient} க்கு புதுப்பிக்கப்பட்டது. இதோ புதிய முன்னோட்டம். பெறுநர்: ${draft.recipient}, தலைப்பு: ${draft.subject}, உள்ளடக்கம்: ${draft.body}. அனுப்ப send சொல்லுங்கள்.`
+                });
+            }
+            // Handle new value for subject
+            else if (step === 'change-subject') {
+                draft.subject = text.trim();
+                setDraftEmail(draft);
+                setComposeStep('confirm');
+                response = getResponse({
+                    en: `Subject updated. Here is the new preview. To: ${draft.recipient}, Subject: ${draft.subject}, Body: ${draft.body}. Say send to send, or change to modify.`,
+                    hi: `विषय अपडेट किया गया। यह नया पूर्वावलोकन है। प्राप्तकर्ता: ${draft.recipient}, विषय: ${draft.subject}, सामग्री: ${draft.body}। भेजने के लिए send कहें।`,
+                    ta: `தலைப்பு புதுப்பிக்கப்பட்டது. இதோ புதிய முன்னோட்டம். பெறுநர்: ${draft.recipient}, தலைப்பு: ${draft.subject}, உள்ளடக்கம்: ${draft.body}. அனுப்ப send சொல்லுங்கள்.`
+                });
+            }
+            // Handle new value for body
+            else if (step === 'change-body') {
+                draft.body = text.trim();
+                setDraftEmail(draft);
+                setComposeStep('confirm');
+                response = getResponse({
+                    en: `Body updated. Here is the new preview. To: ${draft.recipient}, Subject: ${draft.subject}, Body: ${draft.body}. Say send to send, or change to modify.`,
+                    hi: `सामग्री अपडेट की गई। यह नया पूर्वावलोकन है। प्राप्तकर्ता: ${draft.recipient}, विषय: ${draft.subject}, सामग्री: ${draft.body}। भेजने के लिए send कहें।`,
+                    ta: `உள்ளடக்கம் புதுப்பிக்கப்பட்டது. இதோ புதிய முன்னோட்டம். பெறுநர்: ${draft.recipient}, தலைப்பு: ${draft.subject}, உள்ளடக்கம்: ${draft.body}. அனுப்ப send சொல்லுங்கள்.`
+                });
             }
             
             setTimeout(() => speak(response), 100);
@@ -586,7 +678,7 @@ const Chatbot: React.FC = () => {
                     response = getResponse({
                         en: 'Email moved to trash.',
                         hi: 'ईमेल कूड़ेदान में डाला गया।',
-                        ta: 'மின்னஞ்சல் குப்பைக்கு நகர்த்தப்பட்டது.'
+                        ta: 'மின்னஞ்சல் குப்பைக்கு நகर்த்தப்பட்டது.'
                     });
                 } catch (err) {
                     response = getResponse({
@@ -646,7 +738,7 @@ const Chatbot: React.FC = () => {
             speak(response);
         }, 100);
         
-    }, [state.currentLanguage, state.emails, state.selectedEmail, state.userProfile, dispatch, speak, stopListening, clearAllScheduledTimers]);
+    }, [state.currentLanguage, state.emails, state.selectedEmail, state.userProfile, dispatch, speak, stopListening, clearAllScheduledTimers, startListening]);
     
     // ====== TEXT INPUT HANDLER ======
     
@@ -670,28 +762,43 @@ const Chatbot: React.FC = () => {
             hasSpokenWelcomeRef.current = true;
             console.log('[WELCOME] Speaking welcome message');
             initAudioContext();
+            // Add a small delay and ensure we have user interaction
             setTimeout(() => {
-                speak(t('welcomeMessage'));
-            }, 200);
+                // Only speak if we have proper user interaction context
+                if (audioContextRef.current && audioContextRef.current.state === 'running') {
+                    speak(t('welcomeMessage'));
+                } else {
+                    // Fallback: speak on next user interaction
+                    const interactionHandler = () => {
+                        speak(t('welcomeMessage'));
+                        window.removeEventListener('click', interactionHandler, true);
+                        window.removeEventListener('pointerdown', interactionHandler, true);
+                    };
+                    window.addEventListener('click', interactionHandler, true);
+                    window.addEventListener('pointerdown', interactionHandler, true);
+                }
+            }, 300);
         };
         
-        // Try immediately
-        const timer = setTimeout(speakWelcome, 150);
-        
-        // Fallback on gesture
-        const gestureHandler = () => {
+        // For autoplay policy compliance, we need user interaction
+        // We'll wait for a user gesture before speaking
+        const userGestureHandler = () => {
             speakWelcome();
-            window.removeEventListener('click', gestureHandler, true);
-            window.removeEventListener('pointerdown', gestureHandler, true);
+            window.removeEventListener('click', userGestureHandler, true);
+            window.removeEventListener('pointerdown', userGestureHandler, true);
+            window.removeEventListener('keydown', userGestureHandler, true);
         };
         
-        window.addEventListener('click', gestureHandler, true);
-        window.addEventListener('pointerdown', gestureHandler, true);
+        // Attach listeners for user interaction
+        window.addEventListener('click', userGestureHandler, true);
+        window.addEventListener('pointerdown', userGestureHandler, true);
+        window.addEventListener('keydown', userGestureHandler, true);
         
+        // Clean up function
         return () => {
-            clearTimeout(timer);
-            window.removeEventListener('click', gestureHandler, true);
-            window.removeEventListener('pointerdown', gestureHandler, true);
+            window.removeEventListener('click', userGestureHandler, true);
+            window.removeEventListener('pointerdown', userGestureHandler, true);
+            window.removeEventListener('keydown', userGestureHandler, true);
         };
     }, [state.isChatbotOpen, speak, t, initAudioContext]);
     

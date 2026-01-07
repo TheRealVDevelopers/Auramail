@@ -95,6 +95,16 @@ const Login: React.FC = () => {
     const passwordRef = useRef('');
 
     const t = useTranslations();
+    
+    // Helper to sanitize voice-captured input for email/username usage
+    const sanitizeUsername = useCallback((name: string) => {
+        return name
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, '') // Remove all spaces
+            .replace(/[^\w.-]/g, '') // Only allow alphanumeric, dots, and hyphens
+            .replace(/^[.-]+|[.-]+$/g, ''); // Remove leading/trailing dots and hyphens
+    }, []);
 
     // Keep refs in sync
     useEffect(() => { voiceStepRef.current = voiceStep; }, [voiceStep]);
@@ -182,13 +192,14 @@ const Login: React.FC = () => {
                 }
                 break;
 
-            case 'username':
-                usernameRef.current = text.trim();
-                setUsername(text.trim());
+            case 'username': {
+                const sanitized = sanitizeUsername(text);
+                usernameRef.current = sanitized;
+                setUsername(sanitized);
                 
                 if (isRegisteringRef.current) {
                     // For registration, auto-generate email
-                    const generatedEmail = `${text.trim()}@gmail.com`;
+                    const generatedEmail = `${sanitized}@gmail.com`;
                     setEmail(generatedEmail);
                     setVoiceStep('password');
                     speak(`Your email will be ${generatedEmail}. Please say your password.`, startListening);
@@ -198,6 +209,7 @@ const Login: React.FC = () => {
                     speak('What is your password?', startListening);
                 }
                 break;
+            }
 
             case 'password':
                 passwordRef.current = text.replace(/\s/g, '');
@@ -234,7 +246,8 @@ const Login: React.FC = () => {
         try {
             if (isRegisteringRef.current) {
                 // Registration
-                if (!usernameValue.trim()) {
+                const sanitizedUsername = sanitizeUsername(usernameValue);
+                if (!sanitizedUsername) {
                     setIsAuthenticating(false);
                     speak('Username is required. Let\'s try again.', () => resetVoiceAuth());
                     return;
@@ -245,7 +258,7 @@ const Login: React.FC = () => {
                     return;
                 }
 
-                const normalizedUsername = usernameValue.trim().toLowerCase();
+                const normalizedUsername = sanitizedUsername.toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                 if (usernameDoc.exists) {
                     setIsAuthenticating(false);
@@ -253,11 +266,11 @@ const Login: React.FC = () => {
                     return;
                 }
 
-                const emailValue = `${usernameValue.trim()}@gmail.com`;
-                console.log('[VOICE AUTH] Creating user account...');
+                const emailValue = `${sanitizedUsername}@gmail.com`;
+                console.log('[VOICE AUTH] Creating user account with email:', emailValue);
                 const userCredential = await auth.createUserWithEmailAndPassword(emailValue, passwordValue);
                 console.log('[VOICE AUTH] User created, setting up profile...');
-                await setupNewUser(userCredential.user!, usernameValue);
+                await setupNewUser(userCredential.user!, sanitizedUsername);
                 console.log('[VOICE AUTH] Setup complete. Transitioning to dashboard...');
                 
                 // Wait a moment for auth state to propagate, then speak success message
@@ -267,7 +280,8 @@ const Login: React.FC = () => {
                 }, 500);
             } else {
                 // Login
-                const normalizedUsername = usernameValue.trim().toLowerCase();
+                const sanitizedUsername = sanitizeUsername(usernameValue);
+                const normalizedUsername = sanitizedUsername.toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                 
                 if (!usernameDoc.exists) {

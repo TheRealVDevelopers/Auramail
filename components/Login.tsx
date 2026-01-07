@@ -95,15 +95,30 @@ const Login: React.FC = () => {
     const passwordRef = useRef('');
 
     const t = useTranslations();
-    
+
     // Helper to sanitize voice-captured input for email/username usage
     const sanitizeUsername = useCallback((name: string) => {
-        return name
-            .trim()
-            .toLowerCase()
-            .replace(/\s+/g, '') // Remove all spaces
+        let cleaned = name.trim().toLowerCase();
+
+        // Handle natural speech for common email terms if they were transcribed as words
+        cleaned = cleaned
+            .replace(/\s+at\s+/g, '@')
+            .replace(/\s+dot\s+/g, '.')
+            .replace(/\s+/g, ''); // Remove all remaining spaces
+
+        // If it looks like a full email already, don't mess with it too much, just basic cleanup
+        if (cleaned.includes('@')) {
+            return cleaned.replace(/[^\w.@-]/g, '');
+        }
+
+        // Otherwise treat as username and be strict
+        return cleaned
             .replace(/[^\w.-]/g, '') // Only allow alphanumeric, dots, and hyphens
             .replace(/^[.-]+|[.-]+$/g, ''); // Remove leading/trailing dots and hyphens
+    }, []);
+
+    const sanitizePassword = useCallback((pass: string) => {
+        return pass.replace(/\s/g, ''); // Always remove spaces for internal consistency
     }, []);
 
     // Keep refs in sync
@@ -165,7 +180,7 @@ const Login: React.FC = () => {
         const lowerText = text.toLowerCase().trim();
         console.log('[VOICE INPUT]', lowerText, 'at step:', voiceStepRef.current);
 
-        switch(voiceStepRef.current) {
+        switch (voiceStepRef.current) {
             case 'initial':
                 // User chooses voice or manual
                 if (lowerText.includes('voice')) {
@@ -196,10 +211,10 @@ const Login: React.FC = () => {
                 const sanitized = sanitizeUsername(text);
                 usernameRef.current = sanitized;
                 setUsername(sanitized);
-                
+
                 if (isRegisteringRef.current) {
-                    // For registration, auto-generate email
-                    const generatedEmail = `${sanitized}@gmail.com`;
+                    // For registration, auto-generate email IF they didn't speak one
+                    const generatedEmail = sanitized.includes('@') ? sanitized : `${sanitized}@gmail.com`;
                     setEmail(generatedEmail);
                     setVoiceStep('password');
                     speak(`Your email will be ${generatedEmail}. Please say your password.`, startListening);
@@ -211,17 +226,19 @@ const Login: React.FC = () => {
                 break;
             }
 
-            case 'password':
-                passwordRef.current = text.replace(/\s/g, '');
-                setPassword(text.replace(/\s/g, ''));
+            case 'password': {
+                const sanitizedPass = sanitizePassword(text);
+                passwordRef.current = sanitizedPass;
+                setPassword(sanitizedPass);
                 setVoiceStep('confirm');
-                
+
                 if (isRegisteringRef.current) {
                     speak('Ready to create your account? Say yes to confirm or no to cancel.', startListening);
                 } else {
                     speak('Ready to login? Say yes to confirm or no to cancel.', startListening);
                 }
                 break;
+            }
 
             case 'confirm':
                 if (lowerText.includes('yes') || lowerText.includes('yeah') || lowerText.includes('confirm') || lowerText.includes('proceed')) {
@@ -247,12 +264,13 @@ const Login: React.FC = () => {
             if (isRegisteringRef.current) {
                 // Registration
                 const sanitizedUsername = sanitizeUsername(usernameValue);
+                const sanitizedPass = sanitizePassword(passwordValue);
                 if (!sanitizedUsername) {
                     setIsAuthenticating(false);
                     speak('Username is required. Let\'s try again.', () => resetVoiceAuth());
                     return;
                 }
-                if (passwordValue.length < 6) {
+                if (sanitizedPass.length < 6) {
                     setIsAuthenticating(false);
                     speak('Password must be at least 6 characters. Let\'s try again.', () => resetVoiceAuth());
                     return;
@@ -266,13 +284,13 @@ const Login: React.FC = () => {
                     return;
                 }
 
-                const emailValue = `${sanitizedUsername}@gmail.com`;
+                const emailValue = sanitizedUsername.includes('@') ? sanitizedUsername : `${sanitizedUsername}@gmail.com`;
                 console.log('[VOICE AUTH] Creating user account with email:', emailValue);
-                const userCredential = await auth.createUserWithEmailAndPassword(emailValue, passwordValue);
+                const userCredential = await auth.createUserWithEmailAndPassword(emailValue, sanitizedPass);
                 console.log('[VOICE AUTH] User created, setting up profile...');
                 await setupNewUser(userCredential.user!, sanitizedUsername);
                 console.log('[VOICE AUTH] Setup complete. Transitioning to dashboard...');
-                
+
                 // Wait a moment for auth state to propagate, then speak success message
                 setTimeout(() => {
                     speak('Account created successfully! Training complete. Taking you to your dashboard now.');
@@ -281,9 +299,10 @@ const Login: React.FC = () => {
             } else {
                 // Login
                 const sanitizedUsername = sanitizeUsername(usernameValue);
+                const sanitizedPass = sanitizePassword(passwordValue);
                 const normalizedUsername = sanitizedUsername.toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
-                
+
                 if (!usernameDoc.exists) {
                     setIsAuthenticating(false);
                     speak('Username not found. Let\'s try again.', () => resetVoiceAuth());
@@ -292,7 +311,7 @@ const Login: React.FC = () => {
 
                 const uid = usernameDoc.data()!.uid;
                 const userDoc = await db.collection('users').doc(uid).get();
-                
+
                 if (!userDoc.exists || !userDoc.data()?.email) {
                     setIsAuthenticating(false);
                     speak('Could not find user details. Please contact support.');
@@ -300,10 +319,10 @@ const Login: React.FC = () => {
                 }
 
                 const loginEmail = userDoc.data()!.email;
-                console.log('[VOICE AUTH] Logging in...');
-                await auth.signInWithEmailAndPassword(loginEmail, passwordValue);
+                console.log('[VOICE AUTH] Logging in with email:', loginEmail);
+                await auth.signInWithEmailAndPassword(loginEmail, sanitizedPass);
                 console.log('[VOICE AUTH] Login successful. Transitioning to dashboard...');
-                
+
                 // Wait a moment for auth state to propagate, then speak success message
                 setTimeout(() => {
                     speak('Login successful! Welcome back. Taking you to your dashboard now.');
@@ -380,7 +399,7 @@ const Login: React.FC = () => {
     // Handle user gesture to enable voice
     const handleEnableVoice = useCallback(() => {
         if (!needsUserGesture) return;
-        
+
         setNeedsUserGesture(false);
         speak('Welcome to VoxMail. Say voice for voice authentication, or manual for manual login.', startListening);
     }, [needsUserGesture, speak, startListening]);
@@ -392,28 +411,38 @@ const Login: React.FC = () => {
         try {
             if (isRegistering) {
                 // REGISTER LOGIC
-                if (!username.trim()) {
+                const sanitizedUsername = sanitizeUsername(username);
+                const sanitizedPass = sanitizePassword(password);
+                if (!sanitizedUsername) {
                     setError('Username is required.');
                     return;
                 }
-                if (password.length < 6) {
+                if (sanitizedPass.length < 6) {
                     setError('Password must be at least 6 characters.');
                     return;
                 }
-                const normalizedUsername = username.trim().toLowerCase();
+                const normalizedUsername = sanitizedUsername.toLowerCase();
                 const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                 if (usernameDoc.exists) {
                     setError('This username is already taken. Please choose another.');
                     return;
                 }
-                
-                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-                await setupNewUser(userCredential.user!, username);
+
+                const finalEmail = email.trim() || `${sanitizedUsername}@gmail.com`;
+                console.log('[MANUAL REG] Creating user with email:', finalEmail, 'username:', sanitizedUsername);
+                const userCredential = await auth.createUserWithEmailAndPassword(finalEmail, sanitizedPass);
+                await setupNewUser(userCredential.user!, sanitizedUsername);
             } else {
                 // LOGIN LOGIC
-                let loginEmail = email;
-                if (!email.trim().includes('@')) {
-                    const normalizedUsername = email.trim().toLowerCase();
+                let loginEmail = email.trim();
+                const sanitizedPass = sanitizePassword(password);
+                console.log('[MANUAL LOGIN] Attempting login with input:', loginEmail);
+
+                if (!loginEmail.includes('@')) {
+                    const sanitizedUsername = sanitizeUsername(loginEmail);
+                    const normalizedUsername = sanitizedUsername.toLowerCase();
+                    console.log('[MANUAL LOGIN] Input treated as username, sanitized to:', normalizedUsername);
+
                     const usernameDoc = await db.collection('usernames').doc(normalizedUsername).get();
                     if (!usernameDoc.exists) {
                         setError("User with that username not found.");
@@ -427,8 +456,9 @@ const Login: React.FC = () => {
                     }
                     loginEmail = userDoc.data()!.email;
                 }
-                
-                await auth.signInWithEmailAndPassword(loginEmail, password);
+
+                console.log('[MANUAL LOGIN] Performing Firebase Auth with email:', loginEmail);
+                await auth.signInWithEmailAndPassword(loginEmail, sanitizedPass);
             }
         } catch (err: any) {
             const errorMessage = err.message.replace('Firebase: ', '');
@@ -442,7 +472,7 @@ const Login: React.FC = () => {
         if (needsUserGesture) {
             return (
                 <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-gray-50 p-4">
-                    <div 
+                    <div
                         className="w-full max-w-md p-12 space-y-8 bg-white rounded-xl shadow-lg text-center cursor-pointer hover:shadow-2xl transition-shadow"
                         onClick={handleEnableVoice}
                     >
@@ -452,7 +482,7 @@ const Login: React.FC = () => {
                         <h1 className="text-3xl font-bold text-blue-600">VoxMail Voice Assistant</h1>
                         <p className="text-xl text-gray-700 font-semibold">🎤 Click anywhere to start</p>
                         <p className="text-sm text-gray-500">Voice authentication will begin automatically</p>
-                        
+
                         <button
                             onClick={() => {
                                 setIsVoiceMode(false);
@@ -475,7 +505,7 @@ const Login: React.FC = () => {
                     <h2 className="text-2xl font-bold text-gray-800">
                         {isAuthenticating ? 'Processing...' : 'Voice Authentication'}
                     </h2>
-                    
+
                     <div className="min-h-[6rem] flex items-center justify-center">
                         <p className="text-lg text-gray-600">{voiceFeedback}</p>
                     </div>
@@ -491,8 +521,8 @@ const Login: React.FC = () => {
                         <div className="bg-green-50 rounded-lg p-4">
                             <div className="flex items-center justify-center space-x-2">
                                 <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce"></div>
-                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                                <div className="w-4 h-4 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                             </div>
                             <p className="text-sm text-green-700 mt-2 font-semibold">
                                 {isRegisteringRef.current ? 'Creating account and setting up your profile...' : 'Logging you in...'}
@@ -557,20 +587,20 @@ const Login: React.FC = () => {
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     {isRegistering && (
-                         <div>
+                        <div>
                             <label htmlFor="username" className="text-sm font-medium text-gray-700">{t('username')}</label>
                             <div className="relative mt-1">
                                 <span className="absolute inset-y-0 left-0 flex items-center pl-3" aria-hidden="true">
                                     <UserIcon className="w-5 h-5 text-gray-400" />
                                 </span>
-                                <input 
-                                    id="username" 
-                                    type="text" 
-                                    value={username} 
-                                    onChange={(e) => setUsername(e.target.value)} 
-                                    placeholder="your_username" 
+                                <input
+                                    id="username"
+                                    type="text"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    placeholder="your_username"
                                     required
-                                    className="w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
+                                    className="w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500"
                                 />
                             </div>
                         </div>
@@ -581,14 +611,14 @@ const Login: React.FC = () => {
                             <span className="absolute inset-y-0 left-0 flex items-center pl-3" aria-hidden="true">
                                 <UserIcon className="w-5 h-5 text-gray-400" />
                             </span>
-                            <input 
-                                id="email" 
+                            <input
+                                id="email"
                                 type={isRegistering ? 'email' : 'text'}
-                                value={email} 
-                                onChange={(e) => setEmail(e.target.value)} 
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
                                 placeholder={isRegistering ? "email@example.com" : "username or email@example.com"}
                                 required
-                                className="w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
+                                className="w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500"
                             />
                         </div>
                     </div>
@@ -598,19 +628,19 @@ const Login: React.FC = () => {
                             <span className="absolute inset-y-0 left-0 flex items-center pl-3" aria-hidden="true">
                                 <LockIcon className="w-5 h-5 text-gray-400" />
                             </span>
-                            <input 
-                                id="password" 
-                                type="password" 
-                                value={password} 
-                                onChange={(e) => setPassword(e.target.value)} 
-                                placeholder="••••••••" 
+                            <input
+                                id="password"
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="••••••••"
                                 required
-                                className="w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500" 
+                                className="w-full py-3 pl-10 pr-3 bg-gray-100 text-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition placeholder-gray-500"
                             />
                         </div>
                     </div>
                     {error && <p className="text-red-500 text-xs text-center pt-1">{error}</p>}
-                    <button 
+                    <button
                         type="submit"
                         className="w-full py-3 mt-4 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     >
